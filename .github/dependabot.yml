@@ -34,6 +34,7 @@ updates:
 
   - package-ecosystem: pip
     directory: /socialagent-admin-console/backend
+    versioning-strategy: increase-if-necessary
     schedule:
       interval: weekly
     cooldown:
@@ -51,6 +52,7 @@ updates:
       - /blueprints/minimal
       - /blueprints/personal-assistant
       - /blueprints/appointment-scheduler
+    versioning-strategy: increase-if-necessary
     schedule:
       interval: weekly
     cooldown:
@@ -80,6 +82,9 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    groups:
+      terraform-providers:
+        patterns: ["*"]
 
   - package-ecosystem: github-actions
     directory: /
@@ -87,3 +92,6 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    groups:
+      github-actions:
+        patterns: ["*"]
