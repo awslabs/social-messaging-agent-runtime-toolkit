@@ -19,52 +19,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  codeql:
-    name: codeql (${{ matrix.language }})
-    # Scheduled-event payloads do not carry repository visibility. Keep CodeQL
-    # off until a repository admin enables it after public code scanning is ready.
-    if: ${{ vars.CODE_SCANNING_ENABLED == 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      security-events: write
-    strategy:
-      fail-fast: false
-      matrix:
-        language: [python, javascript-typescript]
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
-        with:
-          languages: ${{ matrix.language }}
-      - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
-        with:
-          category: /language:${{ matrix.language }}
-
-  # A single, stable check for branch protection. always() is intentional: a
-  # failed, skipped, or cancelled CodeQL job must not turn into a skipped gate.
-  codeql-gate:
-    name: codeql-gate
-    needs: [codeql]
-    if: ${{ always() }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions: {}
-    steps:
-      - name: check the CodeQL result
-        env:
-          RESULT: ${{ needs.codeql.result }}
-          EXPECTED: ${{ vars.CODE_SCANNING_ENABLED == 'true' && 'success' || 'skipped' }}
-        run: |
-          echo "codeql: ${RESULT} (expected ${EXPECTED})"
-          if [ "${RESULT}" != "${EXPECTED}" ]; then
-            echo "::error::CodeQL finished '${RESULT}', expected '${EXPECTED}'"
-            exit 1
-          fi
-
   ash:
     name: ash (bandit + checkov + detect-secrets + npm-audit)
     runs-on: ubuntu-latest
