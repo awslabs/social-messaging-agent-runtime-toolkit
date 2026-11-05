@@ -87,6 +87,17 @@ def _pdf(filename: str = "invoice.pdf") -> InboundMessage:
     )
 
 
+def _audio() -> InboundMessage:
+    return InboundMessage(
+        id="wamid.4",
+        sender="+525555550100",
+        timestamp=MagicMock(),
+        type=MessageType.AUDIO,
+        text="",
+        media=MediaContent(id="m3", mime_type="audio/ogg"),
+    )
+
+
 def _image_request(mod, image_bytes: bytes) -> dict:
     """The Converse request handle_media must build for an image: Stubber rejects
     the call if the model id, the image format or the bytes differ, or if the
@@ -295,6 +306,24 @@ async def test_a_document_the_model_never_sees_logs_no_outcome(webhook, caplog):
         out = await mod.handle_media(_pdf("totals.csv"))
     assert out == "[User sent a document: totals.csv]"
     assert _outcomes(caplog) == []
+
+
+@pytest.mark.asyncio
+async def test_audio_forwards_the_configured_language_list(webhook, monkeypatch):
+    """The default path passes ``transcribe_languages``, so the hook's own call
+    must too: without it Transcribe identifies among every language and can
+    misread a short note as a code the configuration never listed."""
+    mod, _ = webhook
+    monkeypatch.setattr(mod.config, "_transcription_bucket", "bucket")
+    monkeypatch.setattr(mod.config, "transcribe_languages", ("es-MX", "en-US"))
+    mod.app.provider.download_media = AsyncMock(return_value=b"audio")
+    transcribe = AsyncMock(return_value="hola")
+    monkeypatch.setattr(mod, "transcribe_audio", transcribe)
+
+    out = await mod.handle_media(_audio())
+
+    assert out == "hola"
+    assert transcribe.await_args.kwargs["language_options"] == ("es-MX", "en-US")
 
 
 @pytest.mark.asyncio

@@ -31,7 +31,7 @@ This blueprint is a full-featured Strands agent. It remembers facts about each u
 | `src/tools/rich_messages.py` | Recipe-provided implementation (from the `rich-messages` recipe) — builds interactive WhatsApp payloads (buttons, lists, media, location). |
 | `src/tools/voice_reply.py` | Recipe-provided implementation (from the `voice-reply` recipe) — text-to-speech via Amazon Polly, delivered as a WhatsApp voice note. |
 | `src/tools/generate_image.py` | Recipe-provided implementation (from the `generate-image` recipe) — image generation via Bedrock, delivered as a WhatsApp image. |
-| `handlers/` | Lambda Control Layer handlers (run inside AWS Lambda). |
+| `handlers/` | Lambda Control Layer handlers (run inside AWS Lambda). Project code: `socialagent init` copies it once, so a fix shipped in a later blueprint reaches an existing project only when merged by hand. |
 | `handlers/webhook.py` | Inbound messages with media support: transcribes audio, describes images via Claude vision, extracts PDF/document content, and invokes the runtime. Implements `@app.on_media`. |
 | `handlers/notification.py` | Outbound message + template delivery. |
 | `handlers/scheduler.py` | EventBridge scheduled events (reminders, agent tasks). |
