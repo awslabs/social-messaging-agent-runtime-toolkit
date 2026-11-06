@@ -4,6 +4,10 @@ All notable changes to SMART, the Social Messaging Agent Runtime Toolkit, are re
 
 ## [Unreleased]
 
+### Developer experience
+- Published on PyPI as `smart-socialagent` ([ADR-0008](docs/adr/0008-pypi-distribution-name.md)): `socialagent` collides with an existing project there. The command and the import package stay `socialagent`, and `deploy` still needs a clone of the repository for `infra-terraform/`. The package page (`PYPI.md`) opens with the beta and "AS IS" notice.
+- A Release workflow publishes to PyPI from a GitHub Release, through trusted publishing and a `pypi` environment with required reviewers; `CONTRIBUTING.md` has the steps.
+
 ## [2026.10.0] - 2026-11-05
 
 The first public release. Everything below was in the toolkit when it was published.

@@ -2,12 +2,26 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [project]
-name = "socialagent"
+# The distribution name on PyPI, where `socialagent` collides with the existing
+# `social-agent` (ADR-0008). The import package and the console script stay
+# `socialagent`.
+name = "smart-socialagent"
 dynamic = ["version"]
 description = "Social Messaging Agent Runtime Toolkit — SDK for building WhatsApp AI agents on AgentCore"
+readme = "PYPI.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Communications :: Chat",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
 dependencies = [
     "boto3>=1.38.0",
     "cryptography>=46.0.5",

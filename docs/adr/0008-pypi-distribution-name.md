@@ -1,8 +1,8 @@
 ---
 id: ADR-0008
 title: "Distribution name on PyPI"
-status: Proposed
-date: 2026-10-15
+status: Accepted
+date: 2026-11-05
 deciders: SMART maintainers
 supersedes: []
 superseded_by: null
@@ -13,7 +13,7 @@ tags: [packaging, naming]
 
 | Status | Date | Deciders |
 |---|---|---|
-| Proposed | 2026-10-15 | SMART maintainers |
+| Accepted | 2026-11-05 | SMART maintainers |
 
 ## Context
 
@@ -37,9 +37,11 @@ The distribution name and the import name do not have to match. `pip install <di
 
 ## Decision
 
-Proposed. The recommendation: publish under the distribution names **`smart-socialagent`** (the toolkit) and **`smart-socialagent-runtime`** (the agent-side package), keep the import package `socialagent` and the console script `socialagent` unchanged. The question for the maintainers is whether `smart-` is the right prefix, not whether a prefix is needed.
+Publish the toolkit under the distribution name **`smart-socialagent`**, and the agent-side package, once it has its own `pyproject.toml`, under **`smart-socialagent-runtime`**. The import package and the console script stay `socialagent`.
 
-If accepted, `[project] name` in `pyproject.toml` changes to the prefixed name (the runtime package has no `pyproject.toml` today and gets one when it is published), the import package and the console script do not change, the README's install line reads `pip install smart-socialagent` with a note that the import and CLI are `socialagent`, and a test pins the places the distribution name appears.
+The first upload is release 2026.10.0, before the runtime split of ROADMAP 3.3, so the name is held by a real release rather than a placeholder.
+
+`[project] name` in `pyproject.toml` is `smart-socialagent`. The package's PyPI page is `PYPI.md` (`[project] readme`), which opens with the beta and "AS IS" notice, says the import and CLI are `socialagent`, and says that deploying still needs a clone of the repository. The CLI reads its version from the `smart-socialagent` distribution, then from `socialagent` for an environment installed from a checkout before the rename, then from `VERSION`.
 
 ## Alternatives considered
 
@@ -51,19 +53,18 @@ If accepted, `[project] name` in `pyproject.toml` changes to the prefixed name (
 
 ## Consequences
 
-- Until this is decided, nothing is registered on PyPI and the toolkit installs from a clone. [ADR-0003](0003-agent-runtime-is-vendored.md) stays in force.
-- If accepted: the distribution name appears in `pyproject.toml`, the README install line and, once it exists, the release workflow, and a test pins them. The import name and CLI appear everywhere else and do not change.
+- `pip install smart-socialagent` gives `init`, `dev` and the other commands without a clone. `deploy` still needs the checkout's `infra-terraform/` (or `--tf-dir`) until the Terraform is scaffolded into the project (ROADMAP 3.3). [ADR-0003](0003-agent-runtime-is-vendored.md) stays in force: the runtime is still vendored.
+- The distribution name appears in `pyproject.toml`, `PYPI.md`, the README install line and the CLI's version lookup, and `tests/test_distribution_name.py` pins them. The import name and CLI appear everywhere else and do not change.
 - The runtime package's name carries the same prefix, so the two read as a pair on the index.
-- The row "Not published to any registry" in `docs/architecture-decisions.md` is updated when the decision lands.
+- The row on package distribution in `docs/architecture-decisions.md` names the PyPI distribution.
 - PyPI cannot reserve a name: a project exists only once a distribution file is uploaded, and an empty placeholder is name squatting under PEP 541. The first upload is therefore the first release, with its own review.
 
 ## Open questions
 
 Things this record does not settle, or that review may want to challenge. A question that gets answered moves into Decision or Consequences and is removed here.
 
-- Prefix: `smart-` is proposed; is there a better one that reads as the project's name and is free on the index?
-- Timing: decide before the first release so the README never shows an install line that later changes, or defer until the PyPI story is scheduled?
+- None: the prefix (`smart-`) and the timing (publish 2026.10.0 now, before the runtime split) are decided above.
 
 ## Enforced by
 
-Nothing yet. A Proposed record enforces nothing; when the decision is made, the record is updated to Accepted, the distribution name is set in `pyproject.toml`, and a test pins the three places it appears.
+`tests/test_distribution_name.py`: the distribution name in `pyproject.toml`, the install line in `PYPI.md` and the README, and the CLI's version lookup.

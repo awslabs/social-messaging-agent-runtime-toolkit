@@ -171,6 +171,17 @@ A pull request is ready for review when:
 
 If any of these isn't true, say so in the pull request description rather than leaving it for review to discover. A pull request that says "docs not updated yet, follow-up issue linked below" is easier to review than one that silently omits them.
 
+## Releasing
+
+Maintainers only. A release is published on PyPI as `smart-socialagent` by [.github/workflows/release.yml](.github/workflows/release.yml), through PyPI trusted publishing: no token is stored in the repository or its secrets.
+
+1. In a pull request, set `VERSION` to the new release (`YYYY.MM.patch`) and move the `[Unreleased]` entries of `CHANGELOG.md` under a heading for it. Merge it.
+2. Tag the merge commit `v<VERSION>` and publish a GitHub Release from that tag.
+3. The Release workflow checks that the tag matches `VERSION`, runs the packaging tests, builds the wheel and sdist, and checks them with `twine check --strict`. The publish job then waits in the `pypi` environment until a required reviewer approves it, and uploads.
+4. Check the release page on PyPI. PyPI never accepts the same version twice, even after a release is deleted, so a mistake is fixed with a new patch release.
+
+One-time setup, before the first release through the workflow: on PyPI, the project's Publishing settings name this repository, `release.yml` and the `pypi` environment as a trusted publisher; in the repository settings, the `pypi` environment has required reviewers and accepts deployments only from `v*` tags.
+
 ## Code of Conduct
 
 This project has adopted the [Amazon Open Source Code of Conduct](https://aws.github.io/code-of-conduct). For more information see the [Code of Conduct FAQ](https://aws.github.io/code-of-conduct-faq) or contact opensource-codeofconduct@amazon.com with any additional questions or comments.
