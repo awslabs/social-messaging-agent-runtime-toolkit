@@ -21,9 +21,28 @@ tags: [hosting, runtime, contract, security]
 
 ## Decision
 
-Recommendation: one opt-in block, `runtime.external` in `socialagent.<env>.yaml`, that replaces the runtime module and points the Lambdas at either `arn` (an AgentCore Runtime, same or another account) or `url` (an HTTPS endpoint), never both, with `auth` one of `sigv4` (ARN only), `bearer` (a token from a Secrets Manager secret) or `sender_token` (a per-sender developer-authenticated identity token, #107). The webhook sends the same payload it sends today, minus the raw phone number: in external mode `phone` is replaced by a stable per-stack pseudonym (an HMAC of the phone under a stack KMS key) unless the deployer sets `runtime.external.send_phone: true`, and `session_id` derives from that pseudonym (with the epoch of #116), so knowing a phone number is not enough to address someone's session. The response is the existing `SocialAgentResponse` (`result`, `outbound_messages`) as JSON, or the same content as a stream of `text/event-stream` segments (#109); in external mode only, segments are sent as they arrive, in order, paced like queued sends, which amends [ADR-0002](0002-in-band-sends-through-notify-context.md)'s "after the turn" for that path and keeps every other rule of it (the recipient is always the sender, a payload cannot set `to`). The external agent owns its memory: the stack still passes `memory_id`, so an agent granted read access to the stack's AgentCore Memory sees the out-of-band messages [ADR-0006](0006-memory-ownership.md) writes, and an agent that does not use it is told, in the docs, that scheduled and event sends will not appear in its history. The stack's managed path is unchanged.
+Recommendation: one opt-in block, `runtime.external` in `socialagent.<env>.yaml`, that replaces the runtime module and points the Lambdas at either `arn` (an AgentCore Runtime, same or another account) or `url` (an HTTPS endpoint), never both, with `auth` one of `sigv4` (ARN only), `bearer` (a token from a Secrets Manager secret) or `sender_token` (a per-sender developer-authenticated identity token, #107). The managed path is unchanged.
 
-Question for the maintainers: accept this contract, in particular the pseudonymous `phone` and `session_id` by default and the streamed delivery limited to external mode?
+**Identifiers.** The webhook sends the payload it sends today, but in external mode every field and header that carries the phone number is replaced by a stable per-stack pseudonym (an HMAC of the normalized phone under a stack KMS key), unless the deployer sets `runtime.external.send_phone: true`. Replacing `phone` alone would not keep the number out, because today the number is also in these places (`_build_socialagent_payload` in `src/socialagent/handlers/webhook.py`, `src/socialagent/utils/phone.py`):
+
+- `phone`: the sender's number as received.
+- `socialagent.actor_id`: the number's digits (`actor_id_for_phone`).
+- `socialagent.session_id`, and the `runtimeSessionId` header the ARN transport sets from it (`runtime_call.invoke_runtime`): `whatsapp-session-conversation-` plus those digits (`session_id_for_phone`).
+- `socialagent.message_id`: the WhatsApp message id, which encodes the number (M6 in `docs/threat-model.md`).
+- `attachments[].s3.key`: `media/inbound/<message id>.<format>` (`attachment_key` in `src/socialagent/media/attachments.py`), so the same id.
+- The `personal-assistant` blueprint's scheduled `invoke_agent` payload (`handlers/scheduler.py`): `phone`, `actor_id`, and a `scheduled-task-<digits>-scheduled-<schedule id>` session id, with `message_id` set to `scheduled`.
+
+External mode replaces the first four with the pseudonym (the session id keeps its prefix and takes the epoch of #116), derives the staged object's name from the same pseudonymized message id, and builds the scheduled payload's `phone`, `actor_id` and session id the same way, so knowing a phone number is not enough to address someone's session. What the user writes, and a document's file name, can still contain a number: external mode does not scrub message content.
+
+**Memory.** The external agent owns its memory: the stack still passes `memory_id`. Every memory write the toolkit makes goes through one writer (`src/socialagent/memory/writer.py`), which derives `session_id` and `actor_id` from the phone. In external mode it derives them from the pseudonym, in every Lambda that writes memory (webhook, notification, event, scheduler), so those Lambdas need permission to use the HMAC key, and an agent granted read access to the stack's AgentCore Memory restores the same session the out-of-band messages [ADR-0006](0006-memory-ownership.md) writes land in. Without that, the two sets of records sit in different sessions and the agent never sees them. An agent that does not read the stack's Memory is told, in the docs, that scheduled and event sends will not appear in its history.
+
+**Response and streaming.** The response is the existing `SocialAgentResponse` (`result`, `outbound_messages`) as JSON, or the same content as a stream of `text/event-stream` segments (#109). In external mode only, segments are sent as they arrive, in order, paced like queued sends. That amends two rules of [ADR-0002](0002-in-band-sends-through-notify-context.md) for that path: queued messages no longer all go out before the text reply, and a turn that fails partway cannot drop what it already sent, because a segment is delivered before the turn ends (today a turn that raises drops its queue, and the user gets only the generic error). The reply to a stream that fails after some segments went out is the open question below. Every other rule of ADR-0002 is kept: the recipient is always the sender, and a payload cannot set `to`.
+
+**Session ordering.** The ARN transport keeps AgentCore's per-session serialization. For the URL transport the recommendation is the one ADR-0004 already implies: the endpoint serializes turns that share a `session_id`. The webhook does not take a per-sender lock, so external mode does not require the state table for ordering, and the docs tell an adopter that an endpoint which cannot serialize must put a queue in front of itself.
+
+**Attachments.** The `socialagent_runtime.attachments.build_prompt` helper is not available to an external agent, and the files it reads sit in the stack's media bucket behind a read grant on the stack's own runtime role (`S3InboundAttachments` in `infra-terraform/modules/iam/main.tf`), which an external agent does not run as. Recommendation: external mode sends no `attachments` by default, only the text `prompt`, which already carries the fallback text. With `runtime.external.send_attachments: true` each entry carries a short-lived presigned `GET` URL for its staged object in place of `bucket` and `key`, so the bucket stays private and no cross-account role is needed. The presigned URL is a bearer credential, so it expires in minutes and is logged nowhere.
+
+Question for the maintainers: accept this contract, in particular the pseudonymous identifiers by default, the streamed delivery limited to external mode, and the endpoint (not the webhook) owning URL ordering?
 
 ## Alternatives considered
 
@@ -35,17 +54,17 @@ Question for the maintainers: accept this contract, in particular the pseudonymo
 ## Consequences
 
 - The vendored runtime is not part of an external agent, so `socialagent_notify_context()`, `notify` and the other agent-side helpers are not available to it. In-band sends travel only in the response (`outbound_messages` or stream segments); `socialagent runtime status` and `update` report that there is no vendored runtime to compare.
-- Session ordering: the ARN transport keeps AgentCore's per-session serialization; the URL transport does not have it, so either the webhook serializes one sender's turns or the endpoint must, and the docs have to say which (see Open questions).
+- Session ordering: the ARN transport keeps AgentCore's per-session serialization; for the URL transport the endpoint must serialize turns that share a `session_id`, and the docs have to say so.
 - New trust boundaries and data flows: an egress to an endpoint the deployer names, a token exchange, and pseudonymous identifiers leaving the stack. `docs/threat-model.md`, `docs/data-flows.md` and `docs/configuration.md` change with the implementation.
-- `SOCIALAGENT_VERSION` does not change for the managed path; external mode's payload is versioned with it, since `phone` changes meaning there.
-- ADR-0004's "planned, not shipped" paragraph is superseded by this record when it is accepted; ADR-0004's decision on managed hosting stays in force. ADR-0002 gains the external-mode exception above, and ADR-0006's phone-derived ids become the managed-path default rather than the only derivation.
+- `SOCIALAGENT_VERSION` does not change for the managed path; external mode's payload is versioned with it, since `phone`, `actor_id`, `session_id` and `message_id` change meaning there.
+- ADR-0004's "planned, not shipped" paragraph is superseded by this record when it is accepted; ADR-0004's decision on managed hosting stays in force. ADR-0002 gains the two external-mode exceptions above, and ADR-0006's phone-derived ids become the managed-path default rather than the only derivation.
 
 ## Open questions
 
-- URL transport ordering: does the webhook serialize one sender's turns (a per-sender lock in the state table, which external mode would then require), or is ordering the endpoint's contract?
-- Should external mode refuse to deploy without the state table, since the pseudonym-to-session mapping, dedup (#53) and ordering all want it?
+- URL transport ordering: is the endpoint owning serialization acceptable, or should the webhook serialize one sender's turns (a per-sender lock in the state table, which external mode would then require)?
+- Should external mode refuse to deploy without the state table, since dedup (#53) wants it?
 - `sender_token`: is a Cognito Identity Pool the only provider, or is the token exchange a small interface so another identity provider can be plugged in later?
-- Which response errors are the agent's (a non-2xx, a malformed stream) and which are the channel's, and what text does the user get for each?
+- Which response errors are the agent's (a non-2xx, a malformed stream) and which are the channel's, and what text does the user get for each, including a stream that fails after some segments were already sent?
 - Does the console show external stacks, and with which of its views (conversations come from the stack's Memory, which an external agent may not use)?
 
 ## Enforced by
