@@ -4,6 +4,12 @@ All notable changes to SMART, the Social Messaging Agent Runtime Toolkit, are re
 
 ## [Unreleased]
 
+### Changed
+- The deployment marker's description ends with the solution version, `(vX.Y.Z)`, so the anonymous deployment count can be broken down by release (#105).
+
+### Fixed
+- An upgraded stack now takes the new marker description: the marker parameter's description carries the version, so each release is a resource change CloudFormation applies, instead of a description-only change it ignores and Terraform plans again on every deploy (#68).
+
 ## [2026.10.0] - 2026-11-05
 
 The first public release. Everything below was in the toolkit when it was published.

@@ -62,6 +62,32 @@ def test_marker_description_carries_the_release_version():
     assert match.group(1) == VERSION
 
 
+def _marker_template() -> str:
+    return (ROOT / "infra-terraform" / "metrics.tf").read_text()
+
+
+def test_marker_description_ends_with_the_version():
+    """The deployment report reads the release from a trailing (vX.Y.Z), so the
+    version stays the last token of the stack description."""
+    match = re.search(
+        r'^\s*Description\s*=\s*"([^"]*\(tag:core\)[^"]*)"', _marker_template(), re.M
+    )
+    assert match, "metrics.tf no longer has the marker stack description"
+    assert match.group(1).endswith("(v${local.solution_version})"), match.group(1)
+
+
+def test_marker_parameter_changes_with_the_version():
+    """CloudFormation does not apply a description-only change, so a release
+    must also change a resource property for an upgraded stack to take the new
+    description. The SSM parameter's Description carries the version for that."""
+    descriptions = re.findall(
+        r'^\s*Description\s*=\s*"([^"]*)"', _marker_template(), re.M
+    )
+    parameter = [d for d in descriptions if "(tag:core)" not in d]
+    assert parameter, "metrics.tf no longer describes the marker parameter"
+    assert all("${local.solution_version}" in d for d in parameter), parameter
+
+
 def test_changelog_has_a_heading_for_the_version_and_an_unreleased_section():
     log = (ROOT / "CHANGELOG.md").read_text()
     assert "## [Unreleased]" in log

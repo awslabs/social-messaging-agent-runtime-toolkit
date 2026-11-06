@@ -237,7 +237,7 @@ This solution is for prototyping and evaluation purposes. You must determine how
 
 ## Operational Metrics Collection
 
-This deployment creates a small CloudFormation stack, `<env>-<project>-deployment-metrics`, whose only purpose is to let AWS count deployments of this solution. AWS reads an anonymous tracking code (`uksb-pool7fymvx`, set as `tracking_id` in `locals.tf`) from the stack's description. That description is the only thing collected from; the resource tags and resource descriptions elsewhere in this stack are not an ingestion path.
+This deployment creates a small CloudFormation stack, `<env>-<project>-deployment-metrics`, whose only purpose is to let AWS count deployments of this solution. AWS reads an anonymous tracking code (`uksb-pool7fymvx`, set as `tracking_id` in `locals.tf`) from the stack's description, which ends with the solution version (`(vX.Y.Z)`, from `solution_version` in `locals.tf`) so the count can be broken down by release. That description is the only thing collected from; the resource tags and resource descriptions elsewhere in this stack are not an ingestion path.
 
 **What the stack contains.** One [SSM Parameter Store](https://docs.aws.amazon.com/systems-manager/latest/userguide/systems-manager-parameter-store.html) parameter at Standard tier, `/<env>-<project>/deployment-metrics/tracking-code`. CloudFormation requires every template to declare at least one resource, so this is the marker. Standard parameters are free to store and free at standard throughput, it counts against the 10,000 standard parameters per account per Region, and nothing in this solution ever reads it back. You can inspect it yourself:
 
