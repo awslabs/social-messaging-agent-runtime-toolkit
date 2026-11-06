@@ -1,5 +1,5 @@
 moto[all]>=5.0
-pytest>=8.0
+pytest>=9.2.0
 pytest-cov>=4.1
 pytest-mock>=3.12
 freezegun>=1.4
