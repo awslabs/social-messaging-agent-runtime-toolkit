@@ -22,7 +22,7 @@ from shared.auth import require_group
 from shared.aws import s3, cw, logs, codebuild, lambda_client, settings_table, REGION
 from shared.clients import client
 from shared.config import REGISTRY_BUCKET
-from shared.http import failure_response, json_response as _json
+from shared.http import error_response, failure_response, json_response as _json
 from shared.registry import get_registry as _get_registry, list_registry as _list_registry, _registry_key, _registry_prefix_for
 from shared.resolver import app, current_body, from_legacy
 
@@ -44,32 +44,74 @@ def _lambda_suffixes(config: dict) -> list[str]:
     return suffixes
 
 
+def _deploys_builder(config: dict, prefix: str):
+    """The CodeBuild client and project that build this stack's package.
+
+    The client is created in the stack's region, which may not be the
+    console's (as ``_logs_reader`` does for logs), so a stack deployed
+    elsewhere is not read as never deployed. A zip stack builds
+    ``<prefix>-agent-zip-build`` where a docker stack builds
+    ``<prefix>-agent-build`` (#62).
+    """
+    region = config.get("region") or REGION
+    builder = codebuild if region == REGION else client("codebuild", region)
+    if config.get("deployment_type") == "zip":
+        return builder, f"{prefix}-agent-zip-build"
+    return builder, f"{prefix}-agent-build"
+
+
+def _deploys_reason(exc: Exception) -> str:
+    """The AWS error code, as the log routes' ``unreadable`` reports theirs."""
+    if isinstance(exc, ClientError):
+        return (exc.response.get("Error") or {}).get("Code") or "CodeBuildError"
+    return type(exc).__name__
+
+
 def handle_get_deploys(params, _body):
     config = _get_registry(params["id"])
     if not config:
         return _json(404, {"error": "Stack not found"})
     webhook = config.get("outputs", {}).get("webhook_lambda", "")
     prefix = webhook.rsplit("-webhook", 1)[0] if webhook else params["id"]
-    project_name = f"{prefix}-agent-build"
+    builder, project_name = _deploys_builder(config, prefix)
     try:
-        resp = codebuild.list_builds_for_project(projectName=project_name, sortOrder="DESCENDING")
-        build_ids = resp.get("ids", [])[:20]
-        if not build_ids:
-            return _json(200, [])
-        builds = codebuild.batch_get_builds(ids=build_ids)
-        deploys = []
-        for b in builds.get("builds", []):
-            deploys.append({
-                "deployedAt": str(b.get("endTime", b.get("startTime", ""))),
-                "commit": b.get("sourceVersion", "")[:8],
-                "triggeredBy": b.get("initiator", "unknown"),
-                "duration": str(timedelta(seconds=int((b.get("endTime", datetime.now(UTC)) - b.get("startTime", datetime.now(UTC))).total_seconds()))) if b.get("endTime") and b.get("startTime") else "—",
-                "status": b.get("buildStatus", "UNKNOWN").lower().replace("_", "-"),
-                "buildId": b.get("id", ""),
-            })
-        return _json(200, deploys)
-    except Exception:
+        resp = builder.list_builds_for_project(projectName=project_name, sortOrder="DESCENDING")
+    except (ClientError, BotoCoreError) as exc:
+        return _deploys_unreadable(exc, project_name)
+    build_ids = resp.get("ids", [])[:20]
+    if not build_ids:
         return _json(200, [])
+    try:
+        builds = builder.batch_get_builds(ids=build_ids)
+    except (ClientError, BotoCoreError) as exc:
+        return _deploys_unreadable(exc, project_name)
+    deploys = []
+    for b in builds.get("builds", []):
+        deploys.append({
+            "deployedAt": str(b.get("endTime", b.get("startTime", ""))),
+            "commit": b.get("sourceVersion", "")[:8],
+            "triggeredBy": b.get("initiator", "unknown"),
+            "duration": str(timedelta(seconds=int((b.get("endTime", datetime.now(UTC)) - b.get("startTime", datetime.now(UTC))).total_seconds()))) if b.get("endTime") and b.get("startTime") else "—",
+            "status": b.get("buildStatus", "UNKNOWN").lower().replace("_", "-"),
+            "buildId": b.get("id", ""),
+        })
+    return _json(200, deploys)
+
+
+def _deploys_unreadable(exc: Exception, project_name: str) -> dict:
+    """A deploys read that failed, said out loud.
+
+    This used to answer ``200 []`` for every exception, so a permissions or
+    throttling error on the CodeBuild calls looked like a stack that was never
+    deployed (#62). A failure now answers 502 with the AWS error code as its
+    reason, the way the log routes report an unreadable group; the exception's
+    own text stays in the log, since boto3 names ARNs and the console's role.
+    """
+    return error_response(
+        502,
+        f"Could not read the deploys of {project_name} from CodeBuild",
+        reason=_deploys_reason(exc),
+    )
 
 
 # The Errors tab reads its stack's Lambdas in parallel within one budget: at
