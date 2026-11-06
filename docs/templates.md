@@ -121,7 +121,7 @@ A body that reads fine locally can still be rejected at registration:
 
 ### Validating locally
 
-`socialagent templates validate [--env] [--templates] [--prefix]` checks `templates.yaml` for the causes above without calling AWS. `templates sync` runs the same checks on the templates it is about to send (new ones, plus every one with `--force`) and registers nothing while any of them has an **error** (`--skip-validation` overrides, for a rule you know Meta has relaxed). A template that is already registered is skipped rather than sent, so it is not checked again: one Meta has already approved never blocks a sync, including the one CodeBuild runs during a deploy. A new malformed body there fails in seconds with the rule named.
+`socialagent templates validate [--env] [--templates] [--prefix]` checks `templates.yaml` for the causes above without calling AWS. A project with no templates file and no templates path configured (`--templates`, `TEMPLATES_PATH` or `whatsapp.templates`), such as one from the `minimal` blueprint, has nothing to check: the command says so and exits 0. A configured path that does not exist is still an error. `templates sync` runs the same checks on the templates it is about to send (new ones, plus every one with `--force`) and registers nothing while any of them has an **error** (`--skip-validation` overrides, for a rule you know Meta has relaxed). A template that is already registered is skipped rather than sent, so it is not checked again: one Meta has already approved never blocks a sync, including the one CodeBuild runs during a deploy. A new malformed body there fails in seconds with the rule named.
 
 | Severity | Check |
 |---|---|

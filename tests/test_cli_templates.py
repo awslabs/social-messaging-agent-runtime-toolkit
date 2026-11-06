@@ -320,3 +320,38 @@ def test_validate_command_exit_status(tmp_path, capsys):
     ns.templates = "bad.yaml"
     with pytest.raises(CliError, match="Meta would reject"):
         cmd_templates_validate(ns)
+
+
+def test_validate_without_templates_file_or_config_exits_cleanly(
+    tmp_path, capsys, monkeypatch
+):
+    """The minimal blueprint writes no templates.yaml: nothing to check is not an error."""
+    from socialagent.cli.templates import cmd_templates_validate
+
+    monkeypatch.delenv("TEMPLATES_PATH", raising=False)
+    (tmp_path / "templates.yaml").unlink()
+    cmd_templates_validate(argparse.Namespace(env="dev", prefix="", templates=""))
+    assert "No templates to check" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("source", ["flag", "env", "yaml"])
+def test_validate_missing_configured_templates_file_is_an_error(
+    tmp_path, monkeypatch, source
+):
+    from socialagent.cli._errors import CliError
+    from socialagent.cli.templates import cmd_templates_validate
+
+    monkeypatch.delenv("TEMPLATES_PATH", raising=False)
+    (tmp_path / "templates.yaml").unlink()
+    ns = argparse.Namespace(env="dev", prefix="", templates="")
+    if source == "flag":
+        ns.templates = "missing.yaml"
+    elif source == "env":
+        monkeypatch.setenv("TEMPLATES_PATH", "missing.yaml")
+    else:
+        (tmp_path / "socialagent.dev.yaml").write_text(
+            "schema_version: 3\nproject: my-bot\nenvironment: dev\n"
+            "region: us-east-1\nwhatsapp:\n  templates: missing.yaml\n"
+        )
+    with pytest.raises(CliError, match="templates file not found"):
+        cmd_templates_validate(ns)
