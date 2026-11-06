@@ -20,7 +20,7 @@ terraform {
       # layer ("bufio.Scanner: token too long"); checkouts that deploy today are
       # on 6.37 through 6.66 and all work. Raise the ceiling on purpose, after a
       # deploy on the newer version.
-      version = ">= 6.37, < 6.69"
+      version = ">= 6.37, < 6.72"
     }
   }
 }
