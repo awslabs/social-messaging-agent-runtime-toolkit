@@ -4,4 +4,4 @@ pyyaml>=6.0
 # runtime includes varies by Region and may predate it, so the package
 # ships its own.
 boto3>=1.43.33
-botocore>=1.43.33
+botocore>=1.43.121
