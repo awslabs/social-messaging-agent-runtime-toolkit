@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect, afterEach, beforeAll, vi } from "vitest";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ConversationDetailModal } from "@/components/conversation-detail-modal";
 import { api } from "@/api/client";
 import { ApiError } from "@/api/errors";
@@ -166,6 +166,40 @@ describe("ConversationDetailModal template lines", () => {
     expect(screen.queryByText(/Hello from the dev stack/)).not.toBeInTheDocument();
     expect(screen.getByText("Second conversation")).toBeInTheDocument();
     expect(screen.getByText(/Hello from the test stack/)).toBeInTheDocument();
+  });
+});
+
+describe("ConversationDetailModal delete", () => {
+  beforeAll(() => {
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  afterEach(() => {
+    vi.mocked(api.getConversationMessages).mockReset().mockResolvedValue(userMessages());
+    vi.mocked(api.deleteConversation).mockReset().mockResolvedValue({ deleted: 1 });
+  });
+
+  it("asks before deleting the conversation's history", async () => {
+    // The other two delete paths ask first; this one deleted every event of the
+    // conversation on the first click, with no undo.
+    const onDelete = vi.fn();
+    render(<ConversationDetailModal visible onDismiss={() => {}} onDelete={onDelete} stackId="bot-dev" phoneHash="1555...0100" fullPhone="15555550100" />);
+    await screen.findByText("0 messages");
+
+    // A closed Modal keeps its content in the DOM, so scope the click to the
+    // viewer rather than the confirmation's identically labelled button.
+    const viewerDialog = screen.getByRole("dialog", { name: "Conversation — 1555...0100" });
+    fireEvent.click(within(viewerDialog).getByRole("button", { name: "Delete conversation" }));
+    expect(api.deleteConversation).not.toHaveBeenCalled();
+    expect(onDelete).not.toHaveBeenCalled();
+    expect(screen.getByText(/permanently delete every event in the conversation with 1555\.\.\.0100/)).toBeInTheDocument();
+    expect(screen.getByText(/cannot be undone/)).toBeInTheDocument();
+
+    // The conversation is only deleted once the confirmation is confirmed.
+    const confirm = screen.getByRole("dialog", { name: "Delete conversation — 1555...0100" });
+    fireEvent.click(within(confirm).getByRole("button", { name: "Delete conversation" }));
+    await waitFor(() => expect(api.deleteConversation).toHaveBeenCalledWith("bot-dev", "15555550100"));
+    await waitFor(() => expect(onDelete).toHaveBeenCalled());
   });
 });
 

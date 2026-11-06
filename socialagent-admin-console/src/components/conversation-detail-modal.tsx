@@ -120,6 +120,8 @@ function ConversationViewer({ visible, onDismiss, stackId, phoneHash, fullPhone,
   // A failed delete or send, shown over the messages already read.
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  // Asks first, as the other delete paths do: the conversation's events are removed for good.
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [replyText, setReplyText] = useState("");
   const [sending, setSending] = useState(false);
   const [replyMode, setReplyMode] = useState<"text" | "template">("text");
@@ -204,6 +206,7 @@ function ConversationViewer({ visible, onDismiss, stackId, phoneHash, fullPhone,
   };
 
   const handleDelete = async () => {
+    setConfirmDelete(false);
     setDeleting(true);
     setError(null);
     try {
@@ -262,131 +265,146 @@ function ConversationViewer({ visible, onDismiss, stackId, phoneHash, fullPhone,
   const hasOlder = startIdx > 0;
 
   return (
-    <Modal visible={visible} onDismiss={onDismiss} header={`Conversation — ${phoneHash}`} size="large"
-      footer={
-        <SpaceBetween direction="horizontal" size="xs">
-          <Button variant="normal" onClick={onDismiss} disabled={deleting}>Close</Button>
-          {countText && (
-            <Box color="text-body-secondary" fontSize="body-s" padding={{ top: "xs" }}>
-              {countText}
-            </Box>
-          )}
-          <Button variant="normal" loading={deleting} disabled={!admin.allowed} disabledReason={admin.reason} onClick={handleDelete}>
-            {deleting ? deletingText : "Delete conversation"}
-          </Button>
-        </SpaceBetween>
-      }
-    >
-      {loading && <Box textAlign="center" padding="xxl"><Spinner size="large" /></Box>}
-      {deleting && (
-        <Box textAlign="center" padding="xxl">
-          <SpaceBetween size="m" alignItems="center">
-            <Spinner size="large" />
-            <Box variant="h3">{deletingText}</Box>
-            <Box color="text-body-secondary">This may take a moment. Each event is deleted individually from AgentCore Memory.</Box>
+    <>
+      <Modal visible={visible} onDismiss={onDismiss} header={`Conversation — ${phoneHash}`} size="large"
+        footer={
+          <SpaceBetween direction="horizontal" size="xs">
+            <Button variant="normal" onClick={onDismiss} disabled={deleting}>Close</Button>
+            {countText && (
+              <Box color="text-body-secondary" fontSize="body-s" padding={{ top: "xs" }}>
+                {countText}
+              </Box>
+            )}
+            <Button variant="normal" loading={deleting} disabled={!admin.allowed} disabledReason={admin.reason} onClick={() => setConfirmDelete(true)}>
+              {deleting ? deletingText : "Delete conversation"}
+            </Button>
           </SpaceBetween>
-        </Box>
-      )}
-      {loadError && <Alert type="error" header="Could not read this conversation">{loadError}</Alert>}
-      {!loading && incomplete && (
-        <Alert type="warning" header="This conversation may be incomplete">{incompleteText(incomplete)}</Alert>
-      )}
-      {error && <Alert type="error">{error}</Alert>}
-      {readInFull && !error && allMessages.length === 0 && (
-        <Box textAlign="center" color="text-body-secondary" padding="xxl">No messages found.</Box>
-      )}
-      {!loading && visibleMessages.length > 0 && (
-        <div ref={containerRef} style={{ maxHeight: "60vh", overflowY: "auto", display: "flex", flexDirection: "column", gap: "8px", padding: "8px" }}>
-          {hasOlder && (
-            <Box textAlign="center" padding={{ bottom: "xs" }}>
-              <Button variant="inline-link" onClick={handleLoadOlder}>
-                ↑ Load {Math.min(PAGE_SIZE, startIdx)} older messages ({startIdx} remaining)
-              </Button>
-            </Box>
-          )}
-          {visibleMessages.map((m, i) => {
-            const isUser = m.role === "user";
-            const isTemplate = templateNameOf(m.content) !== null;
-            return (
-              <div key={i} style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start" }}>
-                <div style={{
-                  maxWidth: "75%",
-                  padding: "10px 14px",
-                  borderRadius: isUser ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
-                  backgroundColor: isUser ? "#0972d3" : "#2a2e33",
-                  color: "#fff",
-                  fontSize: "14px",
-                  lineHeight: "1.5",
-                }}>
-                  {isTemplate && (
-                    <div style={{ marginBottom: "4px" }}>
-                      <Badge color="blue">Template</Badge>
+        }
+      >
+        {loading && <Box textAlign="center" padding="xxl"><Spinner size="large" /></Box>}
+        {deleting && (
+          <Box textAlign="center" padding="xxl">
+            <SpaceBetween size="m" alignItems="center">
+              <Spinner size="large" />
+              <Box variant="h3">{deletingText}</Box>
+              <Box color="text-body-secondary">This may take a moment. Each event is deleted individually from AgentCore Memory.</Box>
+            </SpaceBetween>
+          </Box>
+        )}
+        {loadError && <Alert type="error" header="Could not read this conversation">{loadError}</Alert>}
+        {!loading && incomplete && (
+          <Alert type="warning" header="This conversation may be incomplete">{incompleteText(incomplete)}</Alert>
+        )}
+        {error && <Alert type="error">{error}</Alert>}
+        {readInFull && !error && allMessages.length === 0 && (
+          <Box textAlign="center" color="text-body-secondary" padding="xxl">No messages found.</Box>
+        )}
+        {!loading && visibleMessages.length > 0 && (
+          <div ref={containerRef} style={{ maxHeight: "60vh", overflowY: "auto", display: "flex", flexDirection: "column", gap: "8px", padding: "8px" }}>
+            {hasOlder && (
+              <Box textAlign="center" padding={{ bottom: "xs" }}>
+                <Button variant="inline-link" onClick={handleLoadOlder}>
+                  ↑ Load {Math.min(PAGE_SIZE, startIdx)} older messages ({startIdx} remaining)
+                </Button>
+              </Box>
+            )}
+            {visibleMessages.map((m, i) => {
+              const isUser = m.role === "user";
+              const isTemplate = templateNameOf(m.content) !== null;
+              return (
+                <div key={i} style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start" }}>
+                  <div style={{
+                    maxWidth: "75%",
+                    padding: "10px 14px",
+                    borderRadius: isUser ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
+                    backgroundColor: isUser ? "#0972d3" : "#2a2e33",
+                    color: "#fff",
+                    fontSize: "14px",
+                    lineHeight: "1.5",
+                  }}>
+                    {isTemplate && (
+                      <div style={{ marginBottom: "4px" }}>
+                        <Badge color="blue">Template</Badge>
+                      </div>
+                    )}
+                    <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}
+                      dangerouslySetInnerHTML={{ __html: isTemplate ? formatTemplateMessage(m.content, templateDetails) : formatWhatsApp(m.content) }}
+                    />
+                    <div style={{ fontSize: "11px", opacity: 0.6, marginTop: "4px", textAlign: isUser ? "right" : "left" }}>
+                      {formatTime(m.timestamp)}
                     </div>
-                  )}
-                  <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}
-                    dangerouslySetInnerHTML={{ __html: isTemplate ? formatTemplateMessage(m.content, templateDetails) : formatWhatsApp(m.content) }}
-                  />
-                  <div style={{ fontSize: "11px", opacity: 0.6, marginTop: "4px", textAlign: isUser ? "right" : "left" }}>
-                    {formatTime(m.timestamp)}
                   </div>
                 </div>
-              </div>
-            );
-          })}
-          <div ref={bottomRef} />
-        </div>
-      )}
-      {!loading && !deleting && fullPhone && (
-        <div style={{ borderTop: "1px solid #3a3e43", marginTop: "8px", padding: "8px 8px 0" }}>
-          <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
-            <button onClick={() => setReplyMode("text")} style={{ background: replyMode === "text" ? "#0972d3" : "#2a2e33", color: "#fff", border: "none", borderRadius: "12px", padding: "4px 12px", fontSize: "12px", cursor: "pointer" }}>Text</button>
-            <button onClick={() => { setReplyMode("template"); if (templates.length === 0) api.getTemplates(stackId).then((ts) => setTemplates(ts.map((t) => ({ name: t.name, category: t.category })))).catch(() => {}); }} style={{ background: replyMode === "template" ? "#0972d3" : "#2a2e33", color: "#fff", border: "none", borderRadius: "12px", padding: "4px 12px", fontSize: "12px", cursor: "pointer" }}>Template</button>
+              );
+            })}
+            <div ref={bottomRef} />
           </div>
-          {replyMode === "text" ? (
-            <div style={{ display: "flex", gap: "8px" }}>
-              <input style={{ flex: 1, background: "#2a2e33", border: "1px solid #3a3e43", borderRadius: "20px", padding: "8px 16px", color: "#fff", fontSize: "14px", outline: "none" }}
-                placeholder="Type a message..." value={replyText}
-                onChange={(e) => setReplyText(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendReply(); } }}
-                disabled={sending} />
-              <Button variant="primary" loading={sending} disabled={!replyText.trim()} onClick={handleSendReply}>Send</Button>
+        )}
+        {!loading && !deleting && fullPhone && (
+          <div style={{ borderTop: "1px solid #3a3e43", marginTop: "8px", padding: "8px 8px 0" }}>
+            <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+              <button onClick={() => setReplyMode("text")} style={{ background: replyMode === "text" ? "#0972d3" : "#2a2e33", color: "#fff", border: "none", borderRadius: "12px", padding: "4px 12px", fontSize: "12px", cursor: "pointer" }}>Text</button>
+              <button onClick={() => { setReplyMode("template"); if (templates.length === 0) api.getTemplates(stackId).then((ts) => setTemplates(ts.map((t) => ({ name: t.name, category: t.category })))).catch(() => {}); }} style={{ background: replyMode === "template" ? "#0972d3" : "#2a2e33", color: "#fff", border: "none", borderRadius: "12px", padding: "4px 12px", fontSize: "12px", cursor: "pointer" }}>Template</button>
             </div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-              <select style={{ background: "#2a2e33", border: "1px solid #3a3e43", borderRadius: "8px", padding: "8px", color: "#fff", fontSize: "13px" }}
-                value={selectedTpl} onChange={(e) => {
-                  const name = e.target.value;
-                  setSelectedTpl(name);
-                  if (name) {
-                    api.getTemplateDetail(stackId, name).then((d) => {
-                      setTplDetail(d);
-                      const body = d.components.find((c) => c.type === "BODY");
-                      const count = (body?.text?.match(/\{\{\d+\}\}/g) || []).length;
-                      setTplParams(new Array(count).fill(""));
-                    }).catch(() => { setTplDetail(null); setTplParams([]); });
-                  } else { setTplDetail(null); setTplParams([]); }
-                }}>
-                <option value="">Select template...</option>
-                {templates.map((t) => <option key={t.name} value={t.name}>{t.name} ({t.category})</option>)}
-              </select>
-              {tplParams.length > 0 && tplParams.map((v, i) => (
-                <input key={i} style={{ background: "#2a2e33", border: "1px solid #3a3e43", borderRadius: "8px", padding: "6px 12px", color: "#fff", fontSize: "13px" }}
-                  placeholder={`Parameter {{${i + 1}}}`} value={v}
-                  onChange={(e) => { const next = [...tplParams]; next[i] = e.target.value; setTplParams(next); }} />
-              ))}
-              {tplDetail && (
-                <div style={{ background: "#1a1d21", borderRadius: "8px", padding: "10px", maxWidth: "320px" }}>
-                  <div style={{ background: "#2a2e33", borderRadius: "8px 8px 8px 4px", padding: "8px 10px", color: "#fff", fontSize: "13px", lineHeight: "1.5" }}>
-                    {tplDetail.components.find((c) => c.type === "BODY")?.text?.replace(/\{\{(\d+)\}\}/g, (_m, n) => tplParams[parseInt(n) - 1] || `{{${n}}}`) || ""}
-                    {tplDetail.status !== "approved" && <div style={{ color: "#f0ad4e", fontSize: "11px", marginTop: "4px" }}>⚠️ {tplDetail.status} — may not deliver</div>}
+            {replyMode === "text" ? (
+              <div style={{ display: "flex", gap: "8px" }}>
+                <input style={{ flex: 1, background: "#2a2e33", border: "1px solid #3a3e43", borderRadius: "20px", padding: "8px 16px", color: "#fff", fontSize: "14px", outline: "none" }}
+                  placeholder="Type a message..." value={replyText}
+                  onChange={(e) => setReplyText(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendReply(); } }}
+                  disabled={sending} />
+                <Button variant="primary" loading={sending} disabled={!replyText.trim()} onClick={handleSendReply}>Send</Button>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                <select style={{ background: "#2a2e33", border: "1px solid #3a3e43", borderRadius: "8px", padding: "8px", color: "#fff", fontSize: "13px" }}
+                  value={selectedTpl} onChange={(e) => {
+                    const name = e.target.value;
+                    setSelectedTpl(name);
+                    if (name) {
+                      api.getTemplateDetail(stackId, name).then((d) => {
+                        setTplDetail(d);
+                        const body = d.components.find((c) => c.type === "BODY");
+                        const count = (body?.text?.match(/\{\{\d+\}\}/g) || []).length;
+                        setTplParams(new Array(count).fill(""));
+                      }).catch(() => { setTplDetail(null); setTplParams([]); });
+                    } else { setTplDetail(null); setTplParams([]); }
+                  }}>
+                  <option value="">Select template...</option>
+                  {templates.map((t) => <option key={t.name} value={t.name}>{t.name} ({t.category})</option>)}
+                </select>
+                {tplParams.length > 0 && tplParams.map((v, i) => (
+                  <input key={i} style={{ background: "#2a2e33", border: "1px solid #3a3e43", borderRadius: "8px", padding: "6px 12px", color: "#fff", fontSize: "13px" }}
+                    placeholder={`Parameter {{${i + 1}}}`} value={v}
+                    onChange={(e) => { const next = [...tplParams]; next[i] = e.target.value; setTplParams(next); }} />
+                ))}
+                {tplDetail && (
+                  <div style={{ background: "#1a1d21", borderRadius: "8px", padding: "10px", maxWidth: "320px" }}>
+                    <div style={{ background: "#2a2e33", borderRadius: "8px 8px 8px 4px", padding: "8px 10px", color: "#fff", fontSize: "13px", lineHeight: "1.5" }}>
+                      {tplDetail.components.find((c) => c.type === "BODY")?.text?.replace(/\{\{(\d+)\}\}/g, (_m, n) => tplParams[parseInt(n) - 1] || `{{${n}}}`) || ""}
+                      {tplDetail.status !== "approved" && <div style={{ color: "#f0ad4e", fontSize: "11px", marginTop: "4px" }}>⚠️ {tplDetail.status} — may not deliver</div>}
+                    </div>
                   </div>
-                </div>
-              )}
-              <Button variant="primary" loading={sending} disabled={!selectedTpl} onClick={handleSendReply}>Send template</Button>
-            </div>
-          )}
-        </div>
-      )}
-    </Modal>
+                )}
+                <Button variant="primary" loading={sending} disabled={!selectedTpl} onClick={handleSendReply}>Send template</Button>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
+      <Modal visible={confirmDelete} onDismiss={() => setConfirmDelete(false)}
+        header={`Delete conversation — ${phoneHash}`}
+        footer={
+          <SpaceBetween direction="horizontal" size="xs">
+            <Button variant="link" onClick={() => setConfirmDelete(false)}>Cancel</Button>
+            <Button variant="primary" onClick={handleDelete}>Delete conversation</Button>
+          </SpaceBetween>
+        }
+      >
+        <Alert type="warning">
+          This will permanently delete every event in the conversation with {phoneHash} from AgentCore Memory. Its history is gone for good; this cannot be undone.
+        </Alert>
+      </Modal>
+    </>
   );
 }
