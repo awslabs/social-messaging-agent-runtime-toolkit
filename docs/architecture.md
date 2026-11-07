@@ -101,6 +101,28 @@ Step by step:
 
 **Attachments.** With `enable_inbound_attachments`, step 4 also stages an inbound image or document in the media bucket and lists it in the payload's `attachments`; the prompt is unchanged. Agent-side, `socialagent_runtime.attachments.build_prompt(payload, accepts=...)` turns that into Converse content blocks so the model receives the original rather than the webhook's description ([Media](media.md#giving-the-agent-the-original)). The runtime role reads that one prefix and the objects expire after a day.
 
+### Where a turn's time went: the `turn_timing` log line
+
+When a user says the bot is slow, the webhook Lambda's log has one INFO line per turn that reached the runtime, buffered or not, written after the last send:
+
+```
+turn_timing outcome=ok total_ms=6800 pre_invoke_ms=60 first_event_ms=420 first_send_ms=5900 paced_ms=500 sends=3
+```
+
+All offsets count from the moment the Lambda began the turn (for a buffered turn, the moment it began the flush, so the debounce window is not included).
+
+| Field | Meaning |
+|---|---|
+| `outcome` | `ok`, `timeout` (the runtime did not answer in time), `error` (the runtime failed, or a hook raised) or `empty` (the runtime returned no usable reply text) |
+| `total_ms` | Start of the turn to the end of the last send |
+| `pre_invoke_ms` | Start of the turn to the runtime call: parsing, media and the `before_invoke` hook |
+| `first_event_ms` | Start of the turn to the moment the runtime answered |
+| `first_send_ms` | Start of the turn to the moment the user's first message went out |
+| `paced_ms` | Time spent waiting between sends (`outbound_gap_seconds`) |
+| `sends` | Messages that went out, including the error text of a failed turn |
+
+A step the turn never reached shows as `-`: `first_event_ms=-` on a timeout, `first_send_ms=-` when nothing was sent. The line holds no phone number, message text or session id.
+
 ## The Four Lambda Roles
 
 SMART has four Lambda roles, each with its own trigger and its own outbound path. All outbound WhatsApp calls converge on the `EUMSocialProvider`.

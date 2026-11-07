@@ -14,6 +14,7 @@ import logging
 import time
 import urllib.parse
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from botocore.exceptions import ConnectTimeoutError, ReadTimeoutError
@@ -314,12 +315,60 @@ async def _call_runtime(
     )
 
 
+@dataclass
+class _TurnTiming:
+    """Where one turn spent its time, logged once as ``turn_timing``.
+
+    Offsets count from ``started``, so the line names no phone number, text or
+    session id. A step the turn never reached shows as ``-``.
+    """
+
+    started: float
+    outcome: str = "ok"
+    runtime_started: float | None = None
+    first_event: float | None = None
+    first_send: float | None = None
+    paced: float = 0.0
+    sends: int = 0
+
+    def runtime_began(self) -> None:
+        self.runtime_started = time.monotonic()
+
+    def runtime_answered(self) -> None:
+        self.first_event = time.monotonic()
+
+    def sent(self) -> None:
+        self.sends += 1
+        if self.first_send is None:
+            self.first_send = time.monotonic()
+
+    async def pause(self, seconds: float) -> None:
+        began = time.monotonic()
+        await asyncio.sleep(seconds)
+        self.paced += time.monotonic() - began
+
+    def line(self) -> str:
+        def ms(at: float | None) -> str:
+            return "-" if at is None else str(int((at - self.started) * 1000))
+
+        return (
+            f"turn_timing outcome={self.outcome}"
+            f" total_ms={ms(time.monotonic())}"
+            f" pre_invoke_ms={ms(self.runtime_started)}"
+            f" first_event_ms={ms(self.first_event)}"
+            f" first_send_ms={ms(self.first_send)}"
+            f" paced_ms={int(self.paced * 1000)}"
+            f" sends={self.sends}"
+        )
+
+
 async def _send_response(
     provider: MessageProvider,
     sender: str,
     result: str | OutboundMessage,
     config: SocialAgentConfig | None = None,
     context: object = None,
+    timing: _TurnTiming | None = None,
 ) -> None:
     """Send the agent response, retrying each send once on transient failures.
 
@@ -328,6 +377,7 @@ async def _send_response(
     still go out when the Lambda is about to time out. A chunk that fails ends
     the reply there.
     """
+    timing = timing or _TurnTiming(time.monotonic())
     if isinstance(result, OutboundMessage):
         sends = [lambda: provider.send_message(sender, result)]
     else:
@@ -337,7 +387,7 @@ async def _send_response(
         ]
     for i, send in enumerate(sends):
         if i > 0 and config is not None:
-            await asyncio.sleep(_gap_seconds(config, context))
+            await timing.pause(_gap_seconds(config, context))
         for attempt in range(2):
             try:
                 await send()
@@ -348,6 +398,7 @@ async def _send_response(
                     logger.exception("Failed to send response")
                     return
             else:
+                timing.sent()
                 break
 
 
@@ -360,22 +411,63 @@ async def _invoke_and_respond(
     after_invoke: Callable | None,
     message: InboundMessage,
     context: object = None,
+    started: float | None = None,
+) -> None:
+    """Run one turn and log its ``turn_timing`` line, whatever way it ends.
+
+    Shared by the immediate (SNS) path and the buffered-flush (SQS) path, so every
+    turn that reaches the runtime logs exactly one line. ``started`` is the
+    ``time.monotonic()`` at which the Lambda began the turn (default: now).
+    """
+    timing = _TurnTiming(time.monotonic() if started is None else started)
+    try:
+        await _run_turn(
+            config,
+            provider,
+            phone,
+            payload,
+            errors,
+            after_invoke,
+            message,
+            context,
+            timing,
+        )
+    except Exception:
+        timing.outcome = "error"
+        raise
+    finally:
+        logger.info(timing.line())
+
+
+async def _run_turn(
+    config: SocialAgentConfig,
+    provider: MessageProvider,
+    phone: str,
+    payload: dict,
+    errors: dict,
+    after_invoke: Callable | None,
+    message: InboundMessage,
+    context: object,
+    timing: _TurnTiming,
 ) -> None:
     """Invoke the runtime, drain queued outbound messages, then send the response.
 
-    Shared by the immediate (SNS) path and the buffered-flush (SQS) path so both
-    behave identically once a payload has been built. ``context`` is the Lambda
-    context: the runtime wait and the gaps between sends fit its remaining time.
+    ``context`` is the Lambda context: the runtime wait and the gaps between sends
+    fit its remaining time.
     """
     attachments_only = False
+    timing.runtime_began()
     try:
         response_text, outbound = await _call_runtime(config, phone, payload, context)
+        timing.runtime_answered()
     except (ReadTimeoutError, ConnectTimeoutError, TimeoutError):
         logger.warning("AgentCore did not answer in time for %s", mask_phone(phone))
+        timing.outcome = "timeout"
         outbound = []
         response_text = errors["timeout"]
     except Exception as exc:
         err = str(exc)
+        timing.outcome = "error"
         outbound = []
         if "ThrottlingException" in err:
             logger.warning("AgentCore throttled for %s", mask_phone(phone))
@@ -410,6 +502,7 @@ async def _invoke_and_respond(
             logger.warning(
                 "Runtime returned no usable reply text for %s", mask_phone(phone)
             )
+            timing.outcome = "empty"
             response_text = errors["generic"]
 
     result: str | OutboundMessage = (
@@ -425,7 +518,7 @@ async def _invoke_and_respond(
     delivered = 0
     for i, msg in enumerate(outbound):
         if i > 0:
-            await asyncio.sleep(_gap_seconds(config, context))
+            await timing.pause(_gap_seconds(config, context))
         try:
             op = msg.get("operation")
             # Pin the recipient to the current conversation's sender.
@@ -472,6 +565,7 @@ async def _invoke_and_respond(
             else:
                 continue
             delivered += 1
+            timing.sent()
         except Exception:
             logger.exception(
                 "Failed to send outbound message %r",
@@ -487,10 +581,11 @@ async def _invoke_and_respond(
     if outbound and isinstance(result, str) and not result.strip():
         if not attachments_only or delivered:
             return
+        timing.outcome = "error"
         result = errors["generic"]
     if outbound:
-        await asyncio.sleep(_gap_seconds(config, context))
-    await _send_response(provider, phone, result, config, context)
+        await timing.pause(_gap_seconds(config, context))
+    await _send_response(provider, phone, result, config, context, timing)
 
 
 def _is_sqs_event(event: dict) -> bool:
@@ -539,6 +634,7 @@ async def _handle_flush(
     path as an immediate message, then the buffer is cleared.
     """
     for record in event.get("Records", []):
+        started = time.monotonic()
         try:
             body = json.loads(record.get("body", "{}"))
         except (json.JSONDecodeError, TypeError):
@@ -576,7 +672,15 @@ async def _handle_flush(
 
         try:
             await _invoke_and_respond(
-                config, provider, phone, payload, errors, after_invoke, message, context
+                config,
+                provider,
+                phone,
+                payload,
+                errors,
+                after_invoke,
+                message,
+                context,
+                started,
             )
         finally:
             # Retire only this flush's snapshot, not the whole partition. The
@@ -619,6 +723,7 @@ def make_webhook_handler(
     buffer = MessageBuffer(config)
 
     async def handler(event: dict, _context: object = None) -> dict:
+        started = time.monotonic()
         if event.get("operation") == "health_check":
             return {"statusCode": 200, "body": "healthy", "handler": "webhook"}
 
@@ -769,6 +874,7 @@ def make_webhook_handler(
             after_invoke,
             message,
             _context,
+            started,
         )
         logger.debug("Response sent to %s", mask_phone(message.sender))
         return {"statusCode": 200, "body": "ok"}
