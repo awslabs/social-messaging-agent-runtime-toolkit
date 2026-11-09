@@ -96,7 +96,7 @@ Apart from that event destination, a bind or unbind changes only entries in the 
 
 A cross-stack log of events received via API Gateway and EventBridge, plus a **Trigger event** wizard. The table shows timestamp, stack, source, event type, the Lambda invoked, a payload summary, and delivery status; it can be filtered by stack, source, or free text. When the event log of a stack could not be read in full, a warning names its Lambda and why, or names the stack when its whole request failed, and the table does not say there are no events. When the request fails, a `502` that could read no event log included, the page shows the error, and the table says the events were not loaded instead of keeping the rows of an earlier load.
 
-The payload summary names the user by the last four digits of the phone number (`phone=+...0100`), as the event Lambda writes it to the log, never by the full number. Two users whose numbers end in the same four digits look alike there, and the free-text filter finds one user's events by those four digits, not by the full number.
+The payload summary names the user by the last four digits of the phone number (`phone=+...0100`), as the event Lambda writes it to the log, never by the full number. Two users whose numbers end in the same four digits look alike there, and the free-text filter finds one user's events by those four digits, not by the full number. The row action **View summary** opens that same summary in a dialog: the event Lambda logs only the masked summary, so the console has no full payload to show.
 
 The trigger wizard lets you POST a test event to any stack that exposes an Events
 API endpoint. Pick a target stack, start from a payload template (custom, order
