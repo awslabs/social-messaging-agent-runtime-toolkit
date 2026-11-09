@@ -103,7 +103,7 @@ export default function EventsPage({ navigate }: { navigate: (href: string) => v
 
   return (
     <>
-      <PayloadModal visible={!!payloadEvent} onDismiss={() => setPayloadEvent(null)} title={`Event — ${payloadEvent?.eventType ?? ""}`} payload={payloadEvent?.payloadSummary ?? ""} />
+      <PayloadModal visible={!!payloadEvent} onDismiss={() => setPayloadEvent(null)} title={`Event summary — ${payloadEvent?.eventType ?? ""}`} payload={payloadEvent?.payloadSummary ?? ""} />
 
       {/* Trigger Event Wizard */}
       <Modal visible={wizardOpen} onDismiss={() => { setWizardOpen(false); setLastResponse(null); }}
@@ -172,7 +172,7 @@ export default function EventsPage({ navigate }: { navigate: (href: string) => v
             { id: "lambda", header: "Lambda invoked", minWidth: 140, cell: (e) => e.lambdaInvoked },
             { id: "payload", header: "Payload summary", minWidth: 200, cell: (e) => e.payloadSummary },
             { id: "status", header: "Status", minWidth: 120, cell: (e) => <StatusIndicator type={eventStatusType(e.status)}>{e.status}</StatusIndicator> },
-            { id: "actions", header: "Actions", minWidth: 80, cell: (e) => <ButtonDropdown variant="inline-icon" expandToViewport items={[{ id: "view-payload", text: "View full payload" }, { id: "go-to-stack", text: "Go to stack" }]} onItemClick={({ detail }) => { if (detail.id === "view-payload") setPayloadEvent(e); else navigate(`#/stacks/${e.stack}`); }} /> },
+            { id: "actions", header: "Actions", minWidth: 80, cell: (e) => <ButtonDropdown variant="inline-icon" expandToViewport items={[{ id: "view-summary", text: "View summary" }, { id: "go-to-stack", text: "Go to stack" }]} onItemClick={({ detail }) => { if (detail.id === "view-summary") setPayloadEvent(e); else navigate(`#/stacks/${e.stack}`); }} /> },
           ]}
           header={
             <Header variant="awsui-h1-sticky" counter={`(${filtered.length})`} description="Events received via API Gateway and EventBridge across all stacks."
