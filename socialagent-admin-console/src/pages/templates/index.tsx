@@ -47,8 +47,13 @@ export default function TemplatesPage({ navigate }: { navigate: (href: string) =
   return (
     <>
       <TemplatePreviewModal visible={!!previewTemplate} onDismiss={() => setPreviewTemplate(null)} stackId={previewTemplate?.stack ?? ""} templateName={previewTemplate?.name ?? ""} />
+      {error ? (
+        <Alert type="error" header="Failed to load templates" action={<Button iconName="refresh" onClick={refresh}>Retry</Button>}>
+          {error}
+        </Alert>
+      ) : (
+      <>
       <SpaceBetween size="s">
-        {error && <Alert type="error" header="Failed to load templates">{error}</Alert>}
         {reclassified.length > 0 && (
           <Alert type="warning" header={`${reclassified.length} template(s) reclassified by Meta`} dismissible={false}>
             Meta has moved these templates out of their original category. When a template goes <strong>UTILITY → MARKETING</strong>,
@@ -113,8 +118,10 @@ export default function TemplatesPage({ navigate }: { navigate: (href: string) =
         filter={<TextFilter filteringText={filterText} filteringPlaceholder="Find templates" onChange={({ detail }) => setFilterText(detail.filteringText)} />}
         pagination={<Pagination currentPageIndex={1} pagesCount={1} />}
         preferences={<CollectionPreferences title="Preferences" confirmLabel="Confirm" cancelLabel="Cancel" preferences={{ pageSize: 10, wrapLines: false, stripedRows: false }} pageSizePreference={{ title: "Page size", options: [{ value: 10, label: "10" }, { value: 25, label: "25" }] }} />}
-        empty={<Box textAlign="center" color="inherit"><Box fontWeight="bold" color="inherit" padding={{ bottom: "s" }}>No templates</Box><Box variant="p" color="inherit">{error || failedStacks.length > 0 ? "Templates that could not be loaded are not shown; see the alert above." : "No WhatsApp templates have been synced yet."}</Box></Box>}
+        empty={<Box textAlign="center" color="inherit"><Box fontWeight="bold" color="inherit" padding={{ bottom: "s" }}>No templates</Box><Box variant="p" color="inherit">{failedStacks.length > 0 ? "Templates that could not be loaded are not shown; see the alert above." : "No WhatsApp templates have been synced yet."}</Box></Box>}
       />
+      </>
+      )}
     </>
   );
 }

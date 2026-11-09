@@ -90,7 +90,11 @@ export default function SchedulesPage({ navigate }: { navigate: (h: string) => v
 
       <SpaceBetween size="l">
         {flash.length > 0 && <Flashbar items={flash.map((f, i) => ({ ...f, id: String(i), dismissible: true, onDismiss: () => setFlash([]) }))} />}
-        {error && <Alert type="error">{error}</Alert>}
+        {error ? (
+          <Alert type="error" header="Failed to load schedules" action={<Button iconName="refresh" onClick={refresh}>Retry</Button>}>
+            {error}
+          </Alert>
+        ) : (
         <Table
           variant="full-page" stickyHeader resizableColumns selectionType="multi"
           loading={loading || deleting} loadingText={deleting ? "Deleting schedules..." : "Loading schedules..."}
@@ -118,6 +122,7 @@ export default function SchedulesPage({ navigate }: { navigate: (h: string) => v
           filter={<TextFilter filteringText={filterText} filteringPlaceholder="Find by name, operation, stack, or phone" onChange={({ detail }) => setFilterText(detail.filteringText)} />}
           empty={<Box textAlign="center" color="inherit"><Box fontWeight="bold">No schedules</Box><Box>No pending or recurring schedules found in EventBridge Scheduler.</Box></Box>}
         />
+        )}
       </SpaceBetween>
     </>
   );
