@@ -50,7 +50,11 @@ export default function StatePage({ navigate }: { navigate: (h: string) => void 
   return (
     <SpaceBetween size="l">
       {flash.length > 0 && <Flashbar items={flash.map((f, i) => ({ ...f, id: String(i), dismissible: true, onDismiss: () => setFlash([]) }))} />}
-      {error && <Alert type="error">{error}</Alert>}
+      {error ? (
+        <Alert type="error" header="Failed to load state" action={<Button iconName="refresh" onClick={refresh}>Retry</Button>}>
+          {error}
+        </Alert>
+      ) : (
       <Table
         variant="full-page" stickyHeader resizableColumns selectionType="multi"
         loading={loading || deleting} loadingText={deleting ? "Deleting..." : "Loading state..."}
@@ -74,6 +78,7 @@ export default function StatePage({ navigate }: { navigate: (h: string) => void 
         filter={<TextFilter filteringText={filterText} filteringPlaceholder="Find by phone, key, value, or stack" onChange={({ detail }) => setFilterText(detail.filteringText)} />}
         empty={<Box textAlign="center" color="inherit"><Box fontWeight="bold">No state entries</Box><Box>No user state stored across any stack.</Box></Box>}
       />
+      )}
     </SpaceBetween>
   );
 }

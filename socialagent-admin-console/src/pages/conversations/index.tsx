@@ -68,7 +68,11 @@ export default function ConversationsPage({ navigate }: { navigate: (href: strin
 
       <SpaceBetween size="l">
         {flash.length > 0 && <Flashbar items={flash.map((f, i) => ({ ...f, id: String(i), dismissible: true, onDismiss: () => setFlash([]) }))} />}
-        {error && <Alert type="error" header="Failed to load conversations">{error}</Alert>}
+        {error ? (
+          <Alert type="error" header="Failed to load conversations" action={<Button iconName="refresh" onClick={refresh}>Retry</Button>}>
+            {error}
+          </Alert>
+        ) : (
         <Table
           variant="full-page" stickyHeader resizableColumns selectionType="multi"
           loading={loading || deleting} loadingText={deleting ? `Deleting ${selectedItems.length} conversations...` : "Loading conversations"}
@@ -102,6 +106,7 @@ export default function ConversationsPage({ navigate }: { navigate: (href: strin
           preferences={<CollectionPreferences title="Preferences" confirmLabel="Confirm" cancelLabel="Cancel" preferences={{ pageSize: 10, wrapLines: false, stripedRows: false }} pageSizePreference={{ title: "Page size", options: [{ value: 10, label: "10" }, { value: 25, label: "25" }] }} />}
           empty={<Box textAlign="center" color="inherit"><Box fontWeight="bold" color="inherit" padding={{ bottom: "s" }}>No conversations</Box><Box variant="p" color="inherit">No conversations have been recorded yet.</Box></Box>}
         />
+        )}
       </SpaceBetween>
     </>
   );
