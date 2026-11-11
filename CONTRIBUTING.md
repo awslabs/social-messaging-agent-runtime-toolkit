@@ -44,7 +44,7 @@ Pull requests from outside contributors are reviewed by the project maintainers,
 
 ## What to expect from the maintainers
 
-Issues and pull requests are triaged within five business days: labelled, and either answered, assigned, or closed with the reason. Beyond that, response time is best effort. A pull request that passes the checks and has an approving review from a code owner is merged by a maintainer; one that goes a month without a response from its author after a review is closed, and can be reopened. There is no stale bot; a maintainer closes it and says why.
+Issues and pull requests are triaged within five business days: labelled, and either answered, assigned, or closed with the reason. Beyond that, response time is best effort. A pull request that passes the checks and has an approving review from a code owner is merged by a maintainer (one from an outside contributor also gets the second review described in [Reviewing a pull request](#reviewing-a-pull-request-maintainers)); one that goes a month without a response from its author after a review is closed, and can be reopened. There is no stale bot; a maintainer closes it and says why.
 
 Reviews route automatically: `.github/CODEOWNERS` names the four maintainers, by GitHub login, for every part of the tree, and the branch protection on `main` requires one of them to approve.
 
@@ -172,6 +172,17 @@ A pull request is ready for review when:
 4. `make check` and `bash scripts/check_license_headers.sh` pass locally, plus the suites from [Running the checks locally](#running-the-checks-locally) that your change touches; new behavior has tests, and no existing test was broken or weakened.
 
 If any of these isn't true, say so in the pull request description rather than leaving it for review to discover. A pull request that says "docs not updated yet, follow-up issue linked below" is easier to review than one that silently omits them.
+
+## Reviewing a pull request (maintainers)
+
+The checks above are what a review looks for. This is how maintainers review a pull request from an outside contributor without running untrusted code where it can reach them:
+
+1. **Pin the head and read the whole diff.** Note the head commit (`gh pr view <n> --json headRefOid`), fetch it with `git fetch origin pull/<n>/head` and read `git diff origin/main...<sha>`, which needs no checkout (`gh pr diff` always shows the current head, so it cannot pin a SHA). Start with the files that run: `Makefile`, `scripts/`, `pyproject.toml`, `uv.lock`, `conftest.py`, `package.json`, `.github/`, Dockerfiles, tool configuration a fork could add (`.mcp.json`, `.envrc`, `.vscode/`, `.devcontainer/`), and agent instruction files (`AGENTS.md`, `CLAUDE.md`, `.kiro/`, `.claude/`, `.amazonq/`). The repository requires approval for every outside contributor's workflow runs; approve them only for a SHA you have read.
+2. **Never run a fork's code in your working clone or with your credentials in reach.** CI runs the suite without AWS access. To run anything CI does not show, use a throwaway container started from a fresh clone, with no host directory mounted and nothing from your environment, and check that the head it fetched is the SHA you read.
+3. **Check that each new test covers the change.** In the step 2 container, since it runs the pull request's code: the test passes at the head, and fails with the pull request's non-test changes restored to the merge base. Where the linked issue describes how to reproduce the bug, reproduce it on the merge base and on the head.
+4. **Check the rest against "What maintainers check"**, plus the commit authors against the pull request's author and the license of any new dependency.
+5. **A second maintainer repeats steps 1 to 4** on the same SHA and writes down what they ran and found. If the head moves, the diff is read again; when it moved only because `main` was merged in, `git show --remerge-diff <sha>` shows what the merge itself changed.
+6. **Merge in order.** Pull requests that add to `## [Unreleased]` in `CHANGELOG.md` conflict with each other: merge first the ones that do not touch it, then the others one at a time, updating the next branch after each merge. On a fork only the author can update it, or a maintainer when the pull request allows edits by maintainers; a maintainer's update dismisses the approval, so it needs a fresh one. Merge with `gh pr merge <n> --merge --match-head-commit <sha>` on the SHA that was reviewed: the repository allows squash and rebase too, and either lands a new commit rather than the reviewed one.
 
 ## Releasing
 

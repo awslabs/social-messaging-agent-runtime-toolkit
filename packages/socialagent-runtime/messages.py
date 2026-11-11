@@ -316,3 +316,23 @@ def call_button(body: str, display_text: str, phone_number: str) -> dict:
             }
         },
     }
+
+
+def reaction(message_id: str, emoji: str) -> dict:
+    """Build a reaction to an earlier WhatsApp message.
+
+    Queue the result with ``notify.send_message`` inside
+    ``socialagent_notify_context()``, like the other builders. The message id
+    to react to is ``payload["socialagent"]["message_id"]`` on the inbound
+    turn (the user's message that started it).
+
+    Args:
+        message_id: WhatsApp message id (``wamid``) of the message to react to.
+        emoji: Unicode emoji. An empty string removes an existing reaction,
+            which is how the WhatsApp Cloud API documents unreacting.
+    """
+    _check(len(message_id) > 0, "reaction message_id cannot be empty")
+    return {
+        "type": "reaction",
+        "payload": {"reaction": {"message_id": message_id, "emoji": emoji}},
+    }
