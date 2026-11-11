@@ -554,7 +554,10 @@ variable "sdk_wheel_path" {
   default     = ""
 
   validation {
-    condition     = var.sdk_wheel_path == "" || (can(regex("^[A-Za-z0-9_.+-]+\\.whl$", basename(var.sdk_wheel_path))) && fileexists(var.sdk_wheel_path))
+    # A conditional, not `||`: Terraform before 1.12 evaluates both sides of
+    # `||`, and fileexists("") fails on "." being a directory. try() covers a
+    # path that names a directory.
+    condition     = var.sdk_wheel_path == "" ? true : (can(regex("^[A-Za-z0-9_.+-]+\\.whl$", basename(var.sdk_wheel_path))) && try(fileexists(var.sdk_wheel_path), false))
     error_message = "Must be the path of an existing .whl file whose name holds only letters, digits and . _ + -."
   }
 }
