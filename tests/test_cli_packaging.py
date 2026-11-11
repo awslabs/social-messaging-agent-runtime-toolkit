@@ -18,6 +18,7 @@ that cannot start is the same bug one step later.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -65,24 +66,23 @@ def built_wheel(tmp_path_factory) -> Path:
 
 
 def _build_wheel(source: Path, out_dir: Path) -> Path:
-    """Build a wheel from *source* into *out_dir*; skip if no builder is available."""
-    result = subprocess.run(
-        [sys.executable, "-m", "build", "--wheel", "--outdir", str(out_dir)],
-        cwd=source,
-        capture_output=True,
-        text=True,
+    """Build a wheel from *source* into *out_dir*.
+
+    Skips only when no builder is installed. A builder that runs and fails is a
+    failure: every archive test here exists to catch a tree that cannot build.
+    """
+    # `build` is not a declared dev dependency; uv is what the Makefile and CI use.
+    if importlib.util.find_spec("build") is not None:
+        cmd = [sys.executable, "-m", "build", "--wheel", "--outdir", str(out_dir)]
+    elif shutil.which("uv"):
+        cmd = ["uv", "build", "--wheel", "--out-dir", str(out_dir)]
+    else:
+        pytest.skip("no wheel builder installed (neither `build` nor uv)")
+    result = subprocess.run(cmd, cwd=source, capture_output=True, text=True)
+    assert result.returncode == 0, (
+        f"`{' '.join(cmd[:3])}` failed to build a wheel from {source}:\n"
+        f"{result.stderr[-2000:]}"
     )
-    if result.returncode != 0:
-        # `build` is not a declared dev dependency; fall back to uv, which is
-        # what the Makefile and CI use.
-        result = subprocess.run(
-            ["uv", "build", "--wheel", "--out-dir", str(out_dir)],
-            cwd=source,
-            capture_output=True,
-            text=True,
-        )
-    if result.returncode != 0:
-        pytest.skip(f"could not build wheel: {result.stderr[-400:]}")
 
     wheels = list(out_dir.glob("*.whl"))
     assert len(wheels) == 1, f"expected exactly one wheel, got {wheels}"
@@ -181,15 +181,13 @@ def test_template_sync_archive_bundles_every_force_include():
         )
 
 
-def _hcl_expression(text: str, name: str) -> str:
-    """Return the bracketed expression assigned to ``name`` in HCL *text*.
+def _hcl_balanced(text: str, start: int) -> int:
+    """Index just past the bracketed expression that opens at or after *start*.
 
     Brackets are balanced outside string literals, so the regexes the filters
     carry cannot end the expression early.
     """
-    match = re.search(rf"^\s*{name}\s*=\s*", text, re.MULTILINE)
-    assert match, f"no `{name} =` assignment"
-    depth, in_string, i = 0, False, match.end()
+    depth, in_string, i = 0, False, start
     while i < len(text):
         c = text[i]
         if in_string:
@@ -204,9 +202,24 @@ def _hcl_expression(text: str, name: str) -> str:
         elif c in ")]}":
             depth -= 1
             if depth == 0:
-                return text[match.end() : i + 1]
+                return i + 1
         i += 1
-    raise AssertionError(f"unbalanced `{name}` expression")
+    raise AssertionError("unbalanced HCL expression")
+
+
+def _hcl_expression(text: str, name: str) -> str:
+    """Return the bracketed expression assigned to ``name`` in HCL *text*."""
+    match = re.search(rf"^\s*{name}\s*=\s*", text, re.MULTILINE)
+    assert match, f"no `{name} =` assignment"
+    return text[match.end() : _hcl_balanced(text, match.end())]
+
+
+def _hcl_block(text: str, header: str) -> str:
+    """Return the body of the block that opens with *header* (``data "x" "y"``)."""
+    match = re.search(rf"^{re.escape(header)}\s*\{{", text, re.MULTILINE)
+    assert match, f"no `{header} {{` block"
+    open_brace = match.end() - 1
+    return text[open_brace : _hcl_balanced(text, open_brace)]
 
 
 def test_template_sync_archive_filters_match_the_layer():
@@ -267,14 +280,7 @@ def test_layer_archive_carries_everything_the_build_reads():
         ".gitignore",
     ]
 
-    packaging_tf = (REPO_ROOT / "infra-terraform" / "packaging.tf").read_text()
-
-    def tf_list(name: str) -> list[str]:
-        match = re.search(rf"^\s*{name}\s*=\s*\[(.*?)\]", packaging_tf, re.M | re.S)
-        assert match, f"{name} is gone from infra-terraform/packaging.tf"
-        return re.findall(r'"([^"]+)"', match.group(1))
-
-    root_files, trees = tf_list("layer_root_files"), tf_list("layer_trees")
+    root_files, trees = _layer_archive()
     missing = [
         path
         for path in read_by_build
@@ -338,6 +344,54 @@ def _tracked_terraform() -> list[str]:
     )
 
 
+def _hcl_list(text: str, name: str) -> list[str]:
+    match = re.search(rf"^\s*{name}\s*=\s*\[(.*?)\]", text, re.M | re.S)
+    assert match, f"no `{name} = [...]`"
+    return re.findall(r'"([^"]+)"', match.group(1))
+
+
+def _layer_archive() -> tuple[list[str], list[str]]:
+    """The repo-root files and trees ``packaging.tf`` zips for the layer build."""
+    packaging_tf = (REPO_ROOT / "infra-terraform" / "packaging.tf").read_text()
+    return (
+        _hcl_list(packaging_tf, "layer_root_files"),
+        _hcl_list(packaging_tf, "layer_trees"),
+    )
+
+
+def _template_sync_archive() -> tuple[list[str], list[str]]:
+    """The repo-root files and trees the template-sync archive zips in a checkout.
+
+    The files are the literal ``filename = ...`` entries of the archive's
+    ``source`` blocks, less ``templates.yaml`` (the project's file, from
+    ``var.templates_path``, which ``pip install .`` never reads) and the
+    blocks only package mode zips (``for_each = var.sdk_from_checkout ? [] :
+    ...``, the install manifest); the interpolated ones belong to the dynamic
+    blocks that carry the SDK's ``*.py`` and the trees ``main.tf`` passes as
+    ``force_included_dirs``.
+    """
+    infra = REPO_ROOT / "infra-terraform"
+    archive = _hcl_block(
+        (infra / "modules" / "templates" / "main.tf").read_text(),
+        'data "archive_file" "template_source"',
+    )
+    package_only = re.compile(
+        r"^\s*for_each\s*=\s*var\.sdk_from_checkout\s*\?\s*\[\]", re.M
+    )
+    for match in reversed(list(re.finditer(r'dynamic\s+"source"\s*\{', archive))):
+        end = _hcl_balanced(archive, match.end() - 1)
+        if package_only.search(archive[match.start() : end]):
+            archive = archive[: match.start()] + archive[end:]
+    files = [
+        name
+        for name in re.findall(r'^\s*filename\s*=\s*"([^"]+)"', archive, re.M)
+        if name != "templates.yaml" and "${" not in name
+    ]
+    assert "pyproject.toml" in files, "the template-sync archive's sources moved"
+    dirs = _hcl_expression((infra / "main.tf").read_text(), "force_included_dirs")
+    return files, re.findall(r'"([^"]+)"\s*=', dirs)
+
+
 @pytest.mark.slow
 def test_wheel_ships_the_stacks_terraform(built_wheel: Path):
     """The wheel carries the root, bootstrap/ and every module, and nothing else.
@@ -372,15 +426,13 @@ def test_wheel_leaves_out_what_a_deployers_terraform_dir_holds(tmp_path: Path):
 
     src = tmp_path / "src-tree"
     src.mkdir()
-    for name in ("pyproject.toml", "VERSION", "LICENSE", "NOTICE"):
-        (src / name).write_bytes((REPO_ROOT / name).read_bytes())
-    for tree in (
-        "src/socialagent",
-        "packages/socialagent-runtime",
-        "blueprints",
-        "recipes",
-        "infra-terraform",
-    ):
+    # What the layer archive carries, which is what `pip install .` reads, less
+    # the .gitignore this test leaves out, plus the Terraform.
+    root_files, trees = _layer_archive()
+    for name in root_files:
+        if name != ".gitignore":
+            (src / name).write_bytes((REPO_ROOT / name).read_bytes())
+    for tree in (*trees, "infra-terraform"):
         shutil.copytree(
             REPO_ROOT / tree,
             src / tree,
@@ -535,12 +587,6 @@ def test_layer_build_leaves_the_runtime_out():
         assert strip < zip_up, install_line
 
 
-def _hcl_list(text: str, name: str) -> list[str]:
-    match = re.search(rf"^\s*{name}\s*=\s*\[(.*?)\]", text, re.M | re.S)
-    assert match, f"no `{name} = [...]`"
-    return re.findall(r'"([^"]+)"', match.group(1))
-
-
 @pytest.mark.slow
 @pytest.mark.parametrize("archive", ["layer", "template-sync"])
 def test_archives_build_the_sdk(tmp_path: Path, archive: str):
@@ -554,19 +600,10 @@ def test_archives_build_the_sdk(tmp_path: Path, archive: str):
     """
     src = tmp_path / archive
     src.mkdir()
-    infra = REPO_ROOT / "infra-terraform"
     if archive == "layer":
-        packaging_tf = (infra / "packaging.tf").read_text()
-        files = _hcl_list(packaging_tf, "layer_root_files")
-        trees = _hcl_list(packaging_tf, "layer_trees")
+        files, trees = _layer_archive()
     else:
-        files = ["pyproject.toml", "VERSION"]
-        block = re.search(
-            r"force_included_dirs\s*=\s*\{(.*?)\n  \}",
-            (infra / "main.tf").read_text(),
-            re.DOTALL,
-        )
-        trees = re.findall(r'"([^"]+)"\s*=', block.group(1))
+        files, trees = _template_sync_archive()
         for f in (REPO_ROOT / "src" / "socialagent").rglob("*.py"):
             rel = f.relative_to(REPO_ROOT)
             (src / rel).parent.mkdir(parents=True, exist_ok=True)
