@@ -211,5 +211,6 @@ def test_a_terraform_entry_overrides_the_clis_spec(checkout):
 
 def test_write_carries_the_sdk_variables(checkout):
     project, tf = checkout
-    path = write(_BASE, project, tf, {"sdk_wheel_path": "/tmp/x.whl"})
-    assert json.loads(path.read_text())["sdk_wheel_path"] == "/tmp/x.whl"
+    wheel = str(project / "dist" / "x.whl")
+    path = write(_BASE, project, tf, {"sdk_wheel_path": wheel})
+    assert json.loads(path.read_text())["sdk_wheel_path"] == wheel
