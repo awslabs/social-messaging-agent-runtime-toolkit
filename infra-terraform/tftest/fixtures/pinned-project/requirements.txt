@@ -1,0 +1,2 @@
+boto3>=1.38.0,<2
+smart-socialagent[runtime]==0.0.0

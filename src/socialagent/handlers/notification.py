@@ -280,7 +280,7 @@ def make_notification_handler(
             # the stack had no scheduler Lambda when it was created (its target is
             # fixed then, so enabling the Lambda later does not move it), and
             # before ctx.schedule and scheduler.schedule refused such a schedule,
-            # or from an agent whose vendored runtime predates the refusal.
+            # or from an agent whose runtime predates the refusal.
             # EventBridge counts the 400 as delivered and the one-shot schedule
             # deletes itself, so this line is the only trace that the user got
             # nothing.

@@ -42,6 +42,54 @@ locals {
   ])
 }
 
+locals {
+  # A project takes socialagent_runtime from the SDK package once its
+  # requirements.txt asks for the package's `runtime` extra (socialagent init
+  # pins it; socialagent runtime update adds the pin to an older project). A
+  # socialagent_runtime/ left in such a project would shadow the installed
+  # package, so both archives drop it. A project without the pin still ships
+  # its copied runtime, and so does a Docker project whose Dockerfile still
+  # copies it, which would otherwise fail to build. wheels/ is always dropped:
+  # the build fills it from sdk_wheel_path, and a developer's own wheels/ must
+  # not reach the image.
+  agent_requirements_file = "${var.agent_source_dir}/requirements.txt"
+  agent_dockerfile        = "${var.agent_source_dir}/${var.dockerfile_path}"
+  # Conditionals rather than &&, which evaluates both sides: file() of a
+  # missing file is an error.
+  pins_runtime_package      = fileexists(local.agent_requirements_file) ? length(regexall("(?m)^[ \\t]*[A-Za-z0-9][A-Za-z0-9._-]*[ \\t]*\\[[^\\]\\n]*\\bruntime\\b[^\\]\\n]*\\]", file(local.agent_requirements_file))) > 0 : false
+  dockerfile_copies_runtime = local.is_docker && fileexists(local.agent_dockerfile) ? length(regexall("(?im)^[ \\t]*COPY[ \\t][^\\n]*\\bsocialagent_runtime\\b", file(local.agent_dockerfile))) > 0 : false
+  drop_runtime_copy         = local.pins_runtime_package && !local.dockerfile_copies_runtime
+
+  # socialagent.*.yaml and .socialagent/ are CLI-side project files (config,
+  # generated tfvars, the Terraform working folder with its providers). They are
+  # never read by the agent, and zipping them rebuilt the image on every deploy.
+  # The fixed names only ever match at the project root; caches and
+  # credentials at any depth come from agent_source_filter_excludes.
+  agent_source_excludes = concat(
+    ["__pycache__", "*.pyc", "*.pyo", ".pytest_cache", ".venv", "handlers", "infrastructure", "infra-terraform", "node_modules", ".git", ".socialagent", "socialagent.dev.yaml", "socialagent.test.yaml", "socialagent.prod.yaml", "wheels"],
+    local.drop_runtime_copy ? ["socialagent_runtime"] : [],
+    local.agent_source_filter_excludes,
+  )
+
+  # A wheel given as sdk_wheel_path is installed into the agent too, so the
+  # agent and the Lambda layer run one build. It is uploaded once more, under
+  # the prefix the agent build role already reads (aws_iam_role_policy.codebuild
+  # and .codebuild_zip), rather than granting that role the layer's bucket, and
+  # under a key carrying its MD5, so a rebuilt wheel is a new object.
+  sdk_wheel_name         = var.sdk_wheel_path == "" ? "" : basename(var.sdk_wheel_path)
+  sdk_wheel_md5          = var.sdk_wheel_path == "" ? "" : filemd5(var.sdk_wheel_path)
+  agent_sdk_wheel_bucket = local.is_docker ? local.effective_agent_source_bucket : local.effective_agent_code_bucket
+  agent_sdk_wheel_object = "${local.is_docker ? local.agent_source_key_prefix : local.agent_code_key_prefix}sdk-wheel-${local.sdk_wheel_md5}/${local.sdk_wheel_name}"
+}
+
+resource "aws_s3_object" "agent_sdk_wheel" {
+  count  = var.sdk_wheel_path != "" ? 1 : 0
+  bucket = local.agent_sdk_wheel_bucket
+  key    = local.agent_sdk_wheel_object
+  source = var.sdk_wheel_path
+  etag   = local.sdk_wheel_md5
+}
+
 # =============================================================================
 # CODEBUILD — builds and pushes agent Docker image on ARM64 (docker mode only)
 # =============================================================================
@@ -94,12 +142,7 @@ data "archive_file" "agent_source" {
   type        = "zip"
   source_dir  = var.agent_source_dir
   output_path = "${path.module}/.terraform/agent-source.zip"
-  # socialagent.*.yaml and .socialagent/ are CLI-side project files (config,
-  # generated tfvars, the Terraform working folder with its providers). They are
-  # never read by the agent, and zipping them rebuilt the image on every deploy.
-  # The fixed names only ever match at the project root; caches and
-  # credentials at any depth come from agent_source_filter_excludes.
-  excludes = concat(["__pycache__", "*.pyc", "*.pyo", ".pytest_cache", ".venv", "handlers", "infrastructure", "infra-terraform", "node_modules", ".git", ".socialagent", "socialagent.dev.yaml", "socialagent.test.yaml", "socialagent.prod.yaml"], local.agent_source_filter_excludes)
+  excludes    = local.agent_source_excludes
 }
 
 resource "aws_s3_object" "agent_source" {
@@ -212,6 +255,13 @@ resource "aws_codebuild_project" "agent_image" {
       name  = "DOCKERFILE"
       value = var.dockerfile_path
     }
+    dynamic "environment_variable" {
+      for_each = var.sdk_wheel_path == "" ? {} : { SDK_WHEEL_BUCKET = local.agent_sdk_wheel_bucket, SDK_WHEEL_KEY = local.agent_sdk_wheel_object }
+      content {
+        name  = environment_variable.key
+        value = environment_variable.value
+      }
+    }
   }
 
   source {
@@ -224,7 +274,8 @@ resource "aws_codebuild_project" "agent_image" {
           commands:
             - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
         build:
-          commands:
+          commands:%{if var.sdk_wheel_path != ""}
+            - mkdir -p wheels && aws s3 cp "s3://$SDK_WHEEL_BUCKET/$SDK_WHEEL_KEY" wheels/%{endif}
             - echo "Building ARM64 Docker image..."
             - docker build --no-cache -f $DOCKERFILE -t $ECR_REPOSITORY_URL:$IMAGE_TAG .
         post_build:
@@ -282,7 +333,7 @@ resource "null_resource" "trigger_build" {
     EOT
   }
 
-  depends_on = [aws_codebuild_project.agent_image[0], aws_s3_object.agent_source[0]]
+  depends_on = [aws_codebuild_project.agent_image[0], aws_s3_object.agent_source[0], aws_s3_object.agent_sdk_wheel]
 }
 
 # Unified trigger for runtime replacement (works for both docker and zip)
@@ -315,6 +366,14 @@ locals {
   # for the build host.
   zip_build_image = "aws/codebuild/amazonlinux2-aarch64-standard:3.0"
 
+  # The SDK wheel, when given, installs beside requirements.txt, listed in a
+  # second requirements file that is empty without one; pip takes the file
+  # over the index for the version requirements.txt pins, and fails the build
+  # when the two versions differ. Once pip has installed
+  # socialagent_runtime, the rsync leaves out a copy the project still holds,
+  # which would otherwise be merged over the installed package; a project
+  # with no pin keeps running its copy.
+  #
   # A requirement that fails to install fails the build, and the wait in
   # build_zip_package fails the apply with it. The first command stops a build
   # on another architecture or Python. The upload is the last build command
@@ -331,9 +390,10 @@ locals {
         commands:
           - python -c 'import platform, sys; build = (platform.machine(), "%d.%d" % sys.version_info[:2]); assert build == ("aarch64", "${local.zip_python_version}"), build'
           - echo "Building zip package on Linux arm64..."
-          - mkdir -p /tmp/build
-          - python -m pip install -r requirements.txt -t /tmp/build --no-input --upgrade
-          - rsync -a --exclude='__pycache__' --exclude='*.pyc' --exclude='handlers' --exclude='.venv' --exclude='.git' . /tmp/build/
+          - mkdir -p /tmp/build /tmp/sdk-wheel && touch /tmp/sdk-wheel/requirements.txt
+          - if [ -n "$SDK_WHEEL_KEY" ]; then aws s3 cp "s3://$OUTPUT_BUCKET/$SDK_WHEEL_KEY" /tmp/sdk-wheel/ && ls /tmp/sdk-wheel/*.whl > /tmp/sdk-wheel/requirements.txt; fi
+          - python -m pip install -r requirements.txt -r /tmp/sdk-wheel/requirements.txt -t /tmp/build --no-input --upgrade
+          - if [ -d /tmp/build/socialagent_runtime ]; then RUNTIME_COPY="--exclude=/socialagent_runtime"; else RUNTIME_COPY=""; fi; rsync -a --exclude='__pycache__' --exclude='*.pyc' --exclude='handlers' --exclude='.venv' --exclude='.git' $RUNTIME_COPY . /tmp/build/
           - find /tmp/build -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
           - find /tmp/build -type d -name "*.dist-info" -exec rm -rf {} + 2>/dev/null || true
           - cd /tmp/build && zip -r /tmp/deployment_package.zip . -q
@@ -393,12 +453,7 @@ data "archive_file" "agent_source_zip" {
   type        = "zip"
   source_dir  = var.agent_source_dir
   output_path = "${path.module}/.terraform/agent-source-zip.zip"
-  # socialagent.*.yaml and .socialagent/ are CLI-side project files (config,
-  # generated tfvars, the Terraform working folder with its providers). They are
-  # never read by the agent, and zipping them rebuilt the image on every deploy.
-  # The fixed names only ever match at the project root; caches and
-  # credentials at any depth come from agent_source_filter_excludes.
-  excludes = concat(["__pycache__", "*.pyc", "*.pyo", ".pytest_cache", ".venv", "handlers", "infrastructure", "infra-terraform", "node_modules", ".git", ".socialagent", "socialagent.dev.yaml", "socialagent.test.yaml", "socialagent.prod.yaml"], local.agent_source_filter_excludes)
+  excludes    = local.agent_source_excludes
 }
 
 resource "aws_s3_object" "agent_source_zip" {
@@ -479,6 +534,13 @@ resource "aws_codebuild_project" "agent_zip" {
       name  = "OUTPUT_BUCKET"
       value = local.effective_agent_code_bucket
     }
+    dynamic "environment_variable" {
+      for_each = var.sdk_wheel_path == "" ? {} : { SDK_WHEEL_KEY = local.agent_sdk_wheel_object }
+      content {
+        name  = environment_variable.key
+        value = environment_variable.value
+      }
+    }
   }
 
   source {
@@ -503,7 +565,9 @@ resource "null_resource" "build_zip_package" {
   triggers = {
     content_hash = terraform_data.agent_code_hash.output
     s3_etag      = aws_s3_object.agent_source_zip[0].etag
-    build_recipe = sha256(jsonencode([local.zip_build_image, local.zip_buildspec]))
+    # The wheel's MD5 only when there is one, so a stack without one keeps
+    # the recipe hash it had.
+    build_recipe = sha256(jsonencode(concat([local.zip_build_image, local.zip_buildspec], var.sdk_wheel_path == "" ? [] : [local.sdk_wheel_md5])))
   }
 
   provisioner "local-exec" {
@@ -540,7 +604,7 @@ resource "null_resource" "build_zip_package" {
     EOT
   }
 
-  depends_on = [aws_codebuild_project.agent_zip[0], aws_s3_object.agent_source_zip[0]]
+  depends_on = [aws_codebuild_project.agent_zip[0], aws_s3_object.agent_source_zip[0], aws_s3_object.agent_sdk_wheel]
 }
 
 # =============================================================================

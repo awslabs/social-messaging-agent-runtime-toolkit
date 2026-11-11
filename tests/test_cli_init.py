@@ -5,8 +5,9 @@
 
 Covers the scaffolder contract:
 
-  - ``socialagent init <name>`` copies the blueprint directory as-is and vendors
-    ``socialagent_runtime/`` — it writes **no** ``.socialagent-manifest.json`` and the
+  - ``socialagent init <name>`` copies the blueprint directory as-is and pins the
+    SDK, which provides ``socialagent_runtime``, in ``requirements.txt`` instead of
+    copying the runtime — it writes **no** ``.socialagent-manifest.json`` and the
     scaffolded tree contains **no** ``manifest.yaml`` (blueprint metadata is
     excluded during the copy).
   - The scaffolded project is runnable: it has ``agent.py`` and the four
@@ -36,6 +37,7 @@ import pytest
 from socialagent.cli import main
 from socialagent.cli.blueprints import get_blueprint_dir, list_blueprints
 from socialagent.cli.init import cmd_init
+from socialagent.cli.runtime_cmd import runtime_requirement, with_pin
 
 # The four Lambda handler files every scaffolded project must ship.
 HANDLER_FILES = ("webhook.py", "notification.py", "scheduler.py", "event.py")
@@ -98,12 +100,26 @@ def test_init_creates_four_handler_files(tmp_project):
         assert (handlers / fname).is_file(), f"missing handler: {fname}"
 
 
-def test_init_vendors_socialagent_runtime(tmp_project):
-    """init copies socialagent_runtime/ into the project (vendored runtime package)."""
+def test_init_pins_the_sdk_and_copies_no_runtime(tmp_project, capsys):
+    """init pins ``<distribution>[runtime]==<CLI version>`` and writes no socialagent_runtime/.
+
+    The agent installs the runtime from the package, so a copy in the project
+    would only shadow it.
+    """
     project = _scaffold(tmp_project)
-    socialagent_runtime_dir = project / "socialagent_runtime"
-    assert socialagent_runtime_dir.is_dir()
-    assert (socialagent_runtime_dir / "__init__.py").is_file()
+    requirement = runtime_requirement()
+    lines = (project / "requirements.txt").read_text().splitlines()
+    assert lines.count(requirement) == 1
+    assert lines[-1] == requirement
+    assert not (project / "socialagent_runtime").exists()
+    assert f"requirements.txt pins {requirement}" in capsys.readouterr().out
+
+
+def test_init_keeps_the_blueprints_own_requirements(tmp_project):
+    """The pin is added to the blueprint's requirements, which arrive unchanged before it."""
+    project = _scaffold(tmp_project)
+    blueprint = (get_blueprint_dir("minimal") / "requirements.txt").read_text()
+    assert (project / "requirements.txt").read_text() == with_pin(blueprint)
 
 
 # ── No-manifest guarantees ───────────────────────────────────────────────────────
@@ -161,11 +177,11 @@ def test_init_personal_assistant_dockerfile_copies_src(tmp_project):
     assert "COPY src ./src" in (project / "Dockerfile").read_text()
 
 
-def test_init_does_not_vendor_pycache(tmp_project):
-    """Vendored socialagent_runtime/ must not include __pycache__/*.pyc artifacts."""
+def test_init_copies_no_bytecode(tmp_project):
+    """No __pycache__/*.pyc reaches the project, from a blueprint imported by tests or anywhere."""
     project = _scaffold(tmp_project)
-    assert list((project / "socialagent_runtime").rglob("__pycache__")) == []
-    assert list((project / "socialagent_runtime").rglob("*.pyc")) == []
+    assert list(project.rglob("__pycache__")) == []
+    assert list(project.rglob("*.pyc")) == []
 
 
 # ── socialagent init — blueprint files arrive byte for byte ───────────────────────
@@ -254,6 +270,8 @@ def test_init_copies_every_blueprint_under_a_non_utf8_locale(tmp_path):
             saw_non_ascii |= not expected.isascii()
             if rel == Path("socialagent.dev.yaml"):
                 expected = expected.replace(b"__project_name__", name.encode())
+            if rel == Path("requirements.txt"):
+                expected = with_pin(expected.decode("utf-8")).encode("utf-8")
             assert (tmp_path / name / rel).read_bytes() == expected, (
                 f"{blueprint}: {rel}"
             )

@@ -19,7 +19,7 @@ SMART has **two runtime layers that never import from each other**:
 | Layer | What it is | Where it runs |
 |-------|-----------|---------------|
 | **Lambda Control Layer** (`src/socialagent/`) | Webhook ingestion, provider calls, memory writes, scheduling, template sync | Inside the Lambda functions (webhook, notification, event, and the opt-in scheduler). Installed from the repo source tree (not PyPI) into a shared Lambda layer at deploy time. |
-| **Agent Runtime Package** (`socialagent_runtime/`) | Agent-side helpers: `notify`, `state`, `scheduler`, `messages`, session management | Inside the AgentCore Runtime container, alongside your agent code. `socialagent init` physically **copies** (vendors) this directory into your project. |
+| **Agent Runtime Package** (`socialagent_runtime/`) | Agent-side helpers: `notify`, `state`, `scheduler`, `messages`, session management | Inside the AgentCore Runtime container, alongside your agent code. Installed from the same `socialagent` package: `socialagent init` pins `smart-socialagent[runtime]==<CLI version>` in your project's `requirements.txt`. |
 
 Your agent code and any tool files run agent-side and may import only from `socialagent_runtime` and the standard library — never from `src/socialagent/`. The two layers meet only at runtime: an agent-side `notify.*()` call invokes the notification Lambda over the network.
 
@@ -63,12 +63,11 @@ projects/my-bot/
 │   ├── event.py          # External events (API Gateway trigger)
 │   ├── scheduler.py      # Scheduled messages (EventBridge trigger)
 │   └── shared/           # Optional: code shared across handler Lambdas
-├── socialagent_runtime/           # Vendored Agent Runtime Package — copied in by socialagent init
-├── requirements.txt
+├── requirements.txt      # Your dependencies, plus the SDK pin that provides socialagent_runtime
 └── templates.yaml        # WhatsApp message templates
 ```
 
-`socialagent init` vendors the `socialagent_runtime/` directory directly into the project — it is a physical copy of `packages/socialagent-runtime/`, not a pip dependency. The copy carries a stamp with a hash of its modules, and the CLI knows the hash of every runtime its own git history has shipped; after upgrading the CLI, `socialagent runtime status` tells you whether the copy is an earlier runtime, and `socialagent runtime update` replaces it (keeping a backup) so the next deploy ships the runtime fixes. A copy the CLI has never shipped, from a later CLI or a local edit, is reported as unknown and only replaced with `--force`. See [Configuration](configuration.md#socialagent-runtime-environment-variables) for the env vars it reads.
+The project holds no copy of the runtime: `socialagent init` appends `smart-socialagent[runtime]==<CLI version>` to `requirements.txt`, and the agent image (or zip package) installs `socialagent_runtime` from that release, so the CLI, the Lambda layer and the agent come from one version. In the checkout, the repo's own environment (`uv sync`) already provides the runtime to `socialagent dev`; from a pip install, `pip install -r requirements.txt` in the project does. After upgrading the CLI, `socialagent runtime status` says whether the pin still names the CLI's version, and `socialagent runtime update` moves it. A project an older CLI scaffolded carries a copy in `socialagent_runtime/` instead; `runtime update` migrates it (it backs the copy up and removes it, pins the package and rewrites the blueprint's Dockerfile lines), and refuses a copy the CLI has never shipped, from a later CLI or a local edit, without `--force`. See [Configuration](configuration.md#socialagent-runtime-environment-variables) for the env vars the runtime reads.
 
 > **handlers/shared/** is packaged into every handler Lambda zip by Terraform.
 > Use it for code shared between `webhook.py`, `event.py`, etc. — event parsers,
@@ -147,13 +146,13 @@ When you're ready, Terraform provisions everything: AgentCore Runtime (your agen
 
 **Which Terraform runs.** Every command that runs Terraform or reads its variables takes the root from `--tf-dir` if you pass it, else from the nearest SMART checkout above the project (an `infra-terraform/main.tf` with `pyproject.toml` and `src/socialagent/` beside it, so another repository's `infra-terraform/`, such as a monorepo's, is passed over), else from a copy of the Terraform the CLI itself ships, which it writes to `.socialagent/infra/<cli version>/` in the project. That copy is managed by the CLI: it is replaced whenever its content differs from what the CLI ships, so edits there are overwritten (Terraform's local state in it, such as `bootstrap`'s, is kept). From a pip install with no checkout, every command uses it, `deploy` and `destroy` included.
 
-**Where the Lambda layer's SDK comes from.** In a checkout, CodeBuild builds the layer and the template sync from the checkout's own source (`pip install .`), so your local changes to `src/socialagent/` deploy. Anywhere else (the managed copy, or a `--tf-dir` with no checkout above it), they install the published package instead: `deploy` and `destroy` pass the CLI's own distribution pinned to its own version as `sdk_package_spec` (for example `smart-socialagent==<version>`), and CodeBuild runs `pip install --only-binary=:all:` on it, so only wheels are installed and no package's build code runs. `deploy` prints which one it uses. This installs from PyPI inside your account, so a CLI version can deploy from a pip install only once that version is on PyPI; treat it as needing a security review before production use ([threat model, M34](threat-model.md#m34-ci-supply-chain-actions-pinned-to-commit-shas-dependency-updates-on-a-cooldown)). To deploy a build that is not published, build its wheel (`uv build --wheel` in the checkout) and pass it:
+**Where the Lambda layer's SDK comes from.** In a checkout, the layer, the template sync and the agent run the checkout's own code, so your local changes to `src/socialagent/` and `packages/socialagent-runtime/` deploy: `deploy` builds the checkout's wheel (`uv build --wheel`, or `python -m build`) into the project's `.socialagent/sdk-wheel/` and passes it as `--sdk-wheel` would, because the version the project pins is the checkout's, which PyPI may not have. The build is reproducible, so an unchanged checkout rebuilds nothing on AWS. A project that still ships a copied runtime gets no wheel, and its layer and template sync build from the checkout's source (`pip install .`) as before. Anywhere else (the managed copy, or a `--tf-dir` with no checkout above it), they install the published package instead: `deploy` and `destroy` pass the CLI's own distribution pinned to its own version as `sdk_package_spec` (for example `smart-socialagent==<version>`), and CodeBuild runs `pip install --only-binary=:all:` on it, so only wheels are installed and no package's build code runs. `deploy` prints which one it uses. This installs from PyPI inside your account, so a CLI version can deploy from a pip install only once that version is on PyPI; treat it as needing a security review before production use ([threat model, M34](threat-model.md#m34-ci-supply-chain-actions-pinned-to-commit-shas-dependency-updates-on-a-cooldown)). To deploy a build that is not published, build its wheel (`uv build --wheel` in the checkout) and pass it:
 
 ```bash
 socialagent deploy --sdk-wheel /path/to/dist/<distribution>-<version>-py3-none-any.whl
 ```
 
-The wheel is uploaded to the stack's build artifacts under a key carrying its MD5 and installed instead of the spec; its dependencies still come from PyPI. In a checkout, `--sdk-wheel` (or `sdk_package_spec` under `terraform:`) switches that checkout's deploy to the package too. The Terraform that runs is still the CLI's own copy, so a wheel of a different version than the CLI may not match it. `destroy` needs no wheel: it builds nothing.
+The wheel is uploaded to the stack's build artifacts under a key carrying its MD5 and installed instead of the spec, in the Lambda layer, the template sync and the agent (beside `requirements.txt`, where pip takes it for the pinned version); its dependencies still come from PyPI. Its version must be the one `requirements.txt` pins, which `deploy` checks before anything runs. In a checkout, `--sdk-wheel` (or `sdk_package_spec` under `terraform:`) switches that checkout's deploy to the package too. The Terraform that runs is still the CLI's own copy, so a wheel of a different version than the CLI may not match it. `destroy` needs no wheel: it builds nothing.
 
 Edit `socialagent.dev.yaml` first — at least `whatsapp.phone_number_id`. Any other variable in `infra-terraform/variables.tf` goes under `terraform:` by its Terraform name. Then:
 
@@ -230,15 +229,17 @@ FROM --platform=linux/arm64 public.ecr.aws/docker/library/python:3.12-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# requirements.txt pins the SDK, which provides socialagent_runtime. A deploy with
+# an SDK wheel puts it in wheels/ of the build context; `wheels*` copies nothing
+# when there is none.
+COPY requirements.txt wheels* ./
+RUN pip install --no-cache-dir -r requirements.txt $(ls *.whl 2>/dev/null)
 
 # AgentCore Runtime expects a non-root user with UID 1000
 RUN useradd -m -u 1000 bedrock_agentcore
 
 # Copy agent code. ADD MORE COPY LINES if your project has additional directories.
 COPY agent.py .
-COPY socialagent_runtime ./socialagent_runtime
 COPY src ./src   # ← if you use src/ for tools, skills, catalog, etc.
 
 RUN chown -R bedrock_agentcore:bedrock_agentcore /app
@@ -258,6 +259,8 @@ CMD ["opentelemetry-instrument", "python", "agent.py"]
 - **`EXPOSE 8080` + `HEALTHCHECK` on `/ping`** — without these, the runtime fails its health check and never marks the container READY.
 - **`CMD ["opentelemetry-instrument", "python", "agent.py"]`** — the `opentelemetry-instrument` wrapper enables OTel tracing. Using plain `python agent.py` silently disables AgentCore Observability.
 - **`--platform=linux/arm64`** — AgentCore Runtime only supports ARM64.
+
+**Do not copy `socialagent_runtime/` into the image.** The runtime comes from the SDK package `requirements.txt` pins; a copy in the image would run instead of it, because the project directory comes first on `sys.path`. The deploy leaves a leftover `socialagent_runtime/` out of the build once the project pins the SDK, and `socialagent runtime status` reports one.
 
 **Common mistake — missing `COPY src ./src`:**
 

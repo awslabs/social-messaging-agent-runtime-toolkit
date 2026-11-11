@@ -117,6 +117,10 @@ def _patch_strands(callback) -> bool:
         return True
 
 
+# What `import socialagent_runtime` needs: the package and its `runtime` extra.
+_RUNTIME_MODULES = frozenset({"socialagent_runtime", "bedrock_agentcore", "strands"})
+
+
 def _load_entrypoint(path: str) -> tuple[object, ModuleType]:
     """Import the agent module and return ``(entrypoint_fn, module)``.
 
@@ -130,7 +134,10 @@ def _load_entrypoint(path: str) -> tuple[object, ModuleType]:
         console.print(f"[red]Cannot load {path}[/red]")
         sys.exit(1)
     mod = importlib.util.module_from_spec(spec)
-    # Add the agent directory to sys.path so vendored socialagent_runtime imports work
+    # Add the agent directory to sys.path so the project's own modules import. It
+    # goes first, so a project that still ships a copied socialagent_runtime/
+    # runs that copy, as its image does; any other project imports the one
+    # installed with this CLI.
     agent_dir = str(Path(path).parent.resolve())
     if agent_dir not in sys.path:
         sys.path.insert(0, agent_dir)
@@ -148,7 +155,21 @@ def _load_entrypoint(path: str) -> tuple[object, ModuleType]:
         sys.exit(1)
     except Exception as exc:  # noqa: BLE001 — surface as an actionable CLI error, not a raw traceback
         console.print(f"[red]Could not load {path}: {exc}[/red]")
-        if isinstance(exc, ModuleNotFoundError):
+        if (
+            isinstance(exc, ModuleNotFoundError)
+            and (exc.name or "").split(".")[0] in _RUNTIME_MODULES
+        ):
+            from socialagent.cli.runtime_cmd import runtime_requirement  # noqa: PLC0415
+
+            distribution = runtime_requirement().partition("[")[0]
+            console.print(
+                "[yellow]Hint: `socialagent dev` runs the agent in this CLI's own "
+                f"environment, which has no {exc.name}. Install the runtime there: "
+                # `\[runtime]` is escaped: Rich reads a bare `[runtime]` as a tag.
+                f'pip install "{distribution}\\[runtime]" (from a SMART checkout, '
+                "run `uv sync` at its root).[/yellow]"
+            )
+        elif isinstance(exc, ModuleNotFoundError):
             console.print(
                 "[yellow]Hint: install the agent's dependencies first — "
                 "run `uv pip install -r requirements.txt` in this project "
@@ -183,7 +204,7 @@ def _dev_sessions_dirs() -> list[Path]:
     """Where the project's ``socialagent_runtime`` keeps dev sessions, its own first.
 
     The path is the runtime's to choose, so it is asked rather than repeated
-    here. A vendored copy without ``_devfiles`` predates the owner-only dev
+    here. A copied runtime without ``_devfiles`` predates the owner-only dev
     directory and keeps them in ``<tmp>/strands/sessions``.
     """
     import tempfile  # noqa: PLC0415

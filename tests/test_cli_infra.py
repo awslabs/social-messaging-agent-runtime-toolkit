@@ -730,3 +730,134 @@ def test_preflight_names_install_hints_for_each_tool(monkeypatch, tmp_path):
         require_on_path("deploy", "terraform", "aws")
     assert "needs aws on PATH" in str(exc.value)
     assert "Terraform >= 1.7" not in str(exc.value)
+
+
+# ── A checkout builds the SDK wheel a pinned project installs ─────────────────
+
+
+@pytest.fixture
+def checkout_project(tmp_path, monkeypatch) -> Path:
+    """A project under projects/ of a fake checkout, pinned to this CLI, as cwd."""
+    from socialagent.cli.runtime_cmd import with_pin
+
+    monkeypatch.setattr(_infra, "sdk_package_spec", lambda: SPEC)
+    repo = tmp_path / "repo"
+    (repo / "infra-terraform").mkdir(parents=True)
+    # What makes it a SMART checkout rather than any infra-terraform/ (_infra._is_checkout).
+    (repo / "pyproject.toml").write_text("[project]\nname = 'smart-socialagent'\n")
+    (repo / "src" / "socialagent").mkdir(parents=True)
+    (repo / "infra-terraform" / "main.tf").write_text("# root\n")
+    (repo / "infra-terraform" / "variables.tf").write_text(
+        (REPO_ROOT / "infra-terraform" / "variables.tf").read_text()
+    )
+    proj = repo / "projects" / "my-bot"
+    proj.mkdir(parents=True)
+    (proj / "socialagent.dev.yaml").write_text(_YAML)
+    (proj / "agent.py").write_text("")
+    (proj / "requirements.txt").write_text(with_pin("boto3\n"))
+    monkeypatch.chdir(proj)
+    return proj
+
+
+def _builds_wheel(calls: list, version: str = "2026.99.0"):
+    """Terraform does nothing; a wheel build writes a wheel into its out dir."""
+    terraform = _fake_terraform(calls)
+
+    def runner(cmd, **kw):
+        if cmd[0] == "terraform":
+            return terraform(cmd, **kw)
+        calls.append((cmd, kw.get("cwd")))
+        out = Path(
+            cmd[cmd.index("--out-dir" if "--out-dir" in cmd else "--outdir") + 1]
+        )
+        (out / f"smart_socialagent-{version}-py3-none-any.whl").write_bytes(b"PK")
+        return Result(0)
+
+    return runner
+
+
+def test_deploy_from_a_checkout_installs_the_checkouts_wheel_in_a_pinned_project(
+    checkout_project, capsys
+):
+    calls: list = []
+    _deploy.deploy(
+        _args(skip_model_check=True), runner=_builds_wheel(calls), account=ACCOUNT
+    )
+    builds = [c for c in calls if isinstance(c, tuple)]
+    assert len(builds) == 1
+    assert builds[0][1] == checkout_project.parent.parent
+    wheel = (
+        checkout_project
+        / ".socialagent"
+        / "sdk-wheel"
+        / "smart_socialagent-2026.99.0-py3-none-any.whl"
+    )
+    tfvars = _deployed_tfvars(checkout_project)
+    assert tfvars["sdk_wheel_path"] == str(wheel)
+    # The wheel selects package mode; the checkout needs no spec from an index.
+    assert "sdk_package_spec" not in tfvars
+    assert "building the wheel of the checkout" in capsys.readouterr().out
+
+
+def test_deploy_from_a_checkout_keeps_the_source_build_for_a_copied_runtime(
+    checkout_project,
+):
+    """A project still on its copied runtime builds nothing, and its stack plans as before."""
+    (checkout_project / "requirements.txt").write_text("boto3\n")
+    calls: list = []
+    _deploy.deploy(
+        _args(skip_model_check=True), runner=_builds_wheel(calls), account=ACCOUNT
+    )
+    assert not [c for c in calls if isinstance(c, tuple)]
+    tfvars = _deployed_tfvars(checkout_project)
+    assert "sdk_wheel_path" not in tfvars and "sdk_package_spec" not in tfvars
+
+
+def test_a_given_wheel_is_not_rebuilt(checkout_project, tmp_path):
+    wheel = tmp_path / "smart_socialagent-2026.99.0-py3-none-any.whl"
+    wheel.write_bytes(b"PK")
+    calls: list = []
+    _deploy.deploy(
+        _args(skip_model_check=True, sdk_wheel=str(wheel)),
+        runner=_builds_wheel(calls),
+        account=ACCOUNT,
+    )
+    assert not [c for c in calls if isinstance(c, tuple)]
+    assert _deployed_tfvars(checkout_project)["sdk_wheel_path"] == str(wheel)
+
+
+def test_a_wheel_of_another_version_than_the_pin_is_refused_before_terraform(
+    checkout_project, tmp_path
+):
+    """pip would refuse it in the agent build, after the layer was rebuilt."""
+    wheel = tmp_path / "smart_socialagent-2026.98.0-py3-none-any.whl"
+    wheel.write_bytes(b"PK")
+    calls: list = []
+    with pytest.raises(CliError, match="pins smart-socialagent.*2026.98.0"):
+        _deploy.deploy(
+            _args(skip_model_check=True, sdk_wheel=str(wheel)),
+            runner=_builds_wheel(calls),
+            account=ACCOUNT,
+        )
+    assert calls == []
+
+
+def test_a_wheel_build_that_fails_says_how_to_go_on(tmp_path, monkeypatch):
+    from socialagent.cli._runner import CommandError
+
+    def runner(cmd, **kw):
+        raise CommandError(cmd, f"`{cmd[0]}` failed", 1)
+
+    monkeypatch.setattr(_infra.shutil, "which", lambda name: "/usr/bin/" + name)
+    with pytest.raises(CliError, match="--sdk-wheel") as exc:
+        _infra.build_checkout_wheel(tmp_path, tmp_path / "out", runner)
+    assert "`uv` failed" in str(exc.value) and "build" in str(exc.value)
+
+
+def test_the_wheel_build_replaces_what_an_earlier_one_left(tmp_path):
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "smart_socialagent-2026.1.0-py3-none-any.whl").write_bytes(b"old")
+    wheel = _infra.build_checkout_wheel(tmp_path, out, _builds_wheel([]))
+    assert sorted(p.name for p in out.iterdir()) == [wheel.name]
+    assert _infra.wheel_version(wheel) == "2026.99.0"

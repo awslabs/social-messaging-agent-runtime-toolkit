@@ -134,6 +134,39 @@ def test_load_entrypoint_exits_with_hint_on_missing_dependency(tmp_path, capsys)
     assert "uv pip install" in out
 
 
+@pytest.mark.parametrize("module", ["bedrock_agentcore.runtime", "strands"])
+def test_load_entrypoint_names_the_runtime_extra_when_its_dependency_is_missing(
+    tmp_path, capsys, monkeypatch, module
+):
+    """Without the runtime's dependencies, the hint is the install that provides them."""
+    from socialagent.cli.runtime_cmd import runtime_requirement
+
+    top = module.split(".")[0]
+    for name in [m for m in sys.modules if m == top or m.startswith(f"{top}.")]:
+        monkeypatch.delitem(sys.modules, name)
+    monkeypatch.setattr(sys, "meta_path", [_Refuse(top), *sys.meta_path])
+    agent = tmp_path / "agent.py"
+    agent.write_text(f"import {module}\n")
+    with pytest.raises(SystemExit):
+        _load_entrypoint(str(agent))
+    out = " ".join(capsys.readouterr().out.split())
+    distribution = runtime_requirement().partition("[")[0]
+    assert f'pip install "{distribution}[runtime]"' in out
+    assert "uv sync" in out
+
+
+class _Refuse:
+    """A meta path finder for which *top* and its submodules are not installed."""
+
+    def __init__(self, top: str):
+        self.top = top
+
+    def find_spec(self, name, path=None, target=None):
+        if name == self.top or name.startswith(f"{self.top}."):
+            raise ModuleNotFoundError(f"No module named {name!r}", name=name)
+        return None
+
+
 def test_load_entrypoint_exits_cleanly_on_syntax_error(tmp_path, capsys):
     """A SyntaxError in agent.py surfaces as an actionable error, not a raw traceback."""
     agent = tmp_path / "agent.py"

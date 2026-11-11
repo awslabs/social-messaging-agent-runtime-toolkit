@@ -30,7 +30,9 @@ A root with no checkout above it builds the Lambda layer and the template
 sync from the published package instead of the SDK source (package mode in
 ``packaging.tf``). :func:`sdk_tfvars` gives such a root what to install: this
 CLI's own distribution at its own version, or a wheel passed to ``deploy
---sdk-wheel``.
+--sdk-wheel``. A checkout whose project takes the runtime from the package
+gets a wheel built from the checkout (:func:`build_checkout_wheel`), because
+the version the project pins is the checkout's, which no index may have.
 """
 
 from __future__ import annotations
@@ -49,6 +51,7 @@ from pathlib import Path
 from socialagent.cli import _tfvars
 from socialagent.cli._assets import terraform_dir
 from socialagent.cli._errors import CliError
+from socialagent.cli._runner import CommandError, Runner, run
 
 MARKER = ".socialagent-infra.json"
 
@@ -383,3 +386,42 @@ def describe_sdk(tfvars: dict[str, str]) -> str | None:
             "not be published; to deploy this build, pass --sdk-wheel <its wheel>"
         )
     return line
+
+
+def wheel_version(wheel: Path) -> str:
+    """The version a wheel's file name carries (``<name>-<version>-...whl``)."""
+    return wheel.name.split("-")[1]
+
+
+def build_checkout_wheel(repo: Path, out_dir: Path, runner: Runner = run) -> Path:
+    """Build the SDK wheel of the checkout at *repo* into *out_dir*, replacing what is there.
+
+    hatchling builds reproducibly, so an unchanged checkout gives a wheel
+    with the same MD5, and the layer and agent builds keyed on it do not
+    run again. uv is the project's tool; ``python -m build`` is the fallback.
+    """
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+    out_dir.mkdir(parents=True)
+    commands = []
+    if shutil.which("uv"):
+        commands.append(["uv", "build", "--wheel", "--out-dir", str(out_dir)])
+    commands.append(
+        [sys.executable, "-m", "build", "--wheel", "--outdir", str(out_dir)]
+    )
+    failures = []
+    for command in commands:
+        try:
+            runner(command, cwd=repo, capture=True)
+        except CommandError as exc:
+            failures.append(str(exc))
+            continue
+        wheels = sorted(out_dir.glob("*.whl"))
+        if len(wheels) == 1:
+            return wheels[0]
+        failures.append(f"`{' '.join(command)}` left {len(wheels)} wheels in {out_dir}")
+    raise CliError(
+        f"could not build the SDK wheel from the checkout at {repo}:\n"
+        + "\n".join(failures)
+        + "\nInstall uv (or `pip install build`), or pass --sdk-wheel <path to a built wheel>"
+    )

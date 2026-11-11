@@ -704,7 +704,7 @@ async def schedule(
                             # Dev-only: log to memory via the SDK writer. This is the
                             # one place socialagent_runtime touches src/socialagent, and it is reachable
                             # ONLY under `socialagent dev` (is_dev_mode) where the full `socialagent`
-                            # SDK is importable. In a vendored production project this
+                            # SDK is importable. In a deployed agent this
                             # branch never runs; the broad except keeps it a no-op if
                             # `socialagent` is absent. Do NOT promote this import to module top.
                             from socialagent.memory.writer import (

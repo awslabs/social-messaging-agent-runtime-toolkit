@@ -549,7 +549,7 @@ variable "sdk_package_spec" {
 }
 
 variable "sdk_wheel_path" {
-  description = "A local SDK wheel to install instead of sdk_package_spec, for testing a build that is not published. Uploaded to the stack's layer-build and template-sync artifacts under a key carrying its MD5. Its dependencies still come from the package index. Takes precedence over sdk_package_spec."
+  description = "A local SDK wheel to install instead of sdk_package_spec, for testing a build that is not published. Installed in the Lambda layer, the template sync and the agent (beside the project's requirements.txt), and uploaded to each build's artifacts under a key carrying its MD5. Its dependencies still come from the package index. Takes precedence over sdk_package_spec."
   type        = string
   default     = ""
 

@@ -4,8 +4,8 @@
 """Packaging tests — the CLI must work from a pip install, not just a checkout.
 
 ``socialagent init`` and ``socialagent recipe add`` copy data directories (``blueprints/``,
-``recipes/``, ``packages/socialagent-runtime/``) that live at the repo root, outside the
-``src/socialagent`` package. Every other test in this suite runs from the checkout,
+``recipes/``) that live at the repo root, outside the ``src/socialagent`` package, and
+``runtime status`` hashes a leftover runtime copy against ``packages/socialagent-runtime/``. Every other test in this suite runs from the checkout,
 where those paths resolve; a pip-installed CLI has no repo root above it, so a
 wheel missing that data leaves ``socialagent init`` broken for every external user
 while the whole suite stays green.
@@ -250,6 +250,13 @@ def test_template_sync_archive_filters_match_the_layer():
     )
 
 
+def _hcl_list(text: str, name: str) -> list[str]:
+    """Return the string literals of the HCL list assigned to ``name`` in *text*."""
+    match = re.search(rf"^\s*{name}\s*=\s*\[(.*?)\]", text, re.M | re.S)
+    assert match, f"no `{name} = [...]`"
+    return re.findall(r'"([^"]+)"', match.group(1))
+
+
 def test_layer_archive_carries_everything_the_build_reads():
     """The layer CodeBuild source must carry every path ``pip install .`` reads.
 
@@ -267,8 +274,12 @@ def test_layer_archive_carries_everything_the_build_reads():
     readme = pyproject["project"].get("readme")
     if isinstance(readme, dict):
         readme = readme.get("file")
+    # infra-terraform/ is the one only-include the layer leaves out on purpose:
+    # the SDK builds without it (test_archives_build_the_sdk), and the stack's
+    # Terraform has no place in a Lambda layer.
     read_by_build = [
         *wheel["packages"],
+        *(p for p in wheel.get("only-include", []) if p != "infra-terraform"),
         *wheel.get("force-include", {}),
         *pyproject["project"].get("license-files", []),
         *([readme] if readme else []),
@@ -338,12 +349,6 @@ def _tracked_terraform() -> list[str]:
         for f in out.stdout.split()
         if not f.startswith("infra-terraform/tftest/")
     )
-
-
-def _hcl_list(text: str, name: str) -> list[str]:
-    match = re.search(rf"^\s*{name}\s*=\s*\[(.*?)\]", text, re.M | re.S)
-    assert match, f"no `{name} = [...]`"
-    return re.findall(r'"([^"]+)"', match.group(1))
 
 
 def _layer_archive() -> tuple[list[str], list[str]]:
@@ -449,15 +454,161 @@ def test_wheel_leaves_out_what_a_deployers_terraform_dir_holds(tmp_path: Path):
     assert "terraform.tfvars.example" in shipped
 
 
+# ── The agent runtime as an installed package ─────────────────────────────────
+
+_RUNTIME_SRC = REPO_ROOT / "packages" / "socialagent-runtime"
+
+
+def _runtime_modules() -> list[str]:
+    return sorted(p.name for p in _RUNTIME_SRC.glob("*.py"))
+
+
+def _wheel_runtime(names: list[str]) -> list[str]:
+    return sorted(
+        n[len("socialagent_runtime/") :]
+        for n in names
+        if n.startswith("socialagent_runtime/")
+    )
+
+
+def test_wheel_installs_the_runtime_package(built_wheel: Path):
+    """Every runtime module ships as ``socialagent_runtime``, byte for byte.
+
+    Byte equality also proves the editable stand-in in ``src/socialagent_runtime/``
+    stayed out: its ``__init__.py`` would take the real one's place.
+    """
+    with zipfile.ZipFile(built_wheel) as wheel:
+        assert _wheel_runtime(wheel.namelist()) == _runtime_modules()
+        for module in _runtime_modules():
+            assert (
+                wheel.read(f"socialagent_runtime/{module}")
+                == (_RUNTIME_SRC / module).read_bytes()
+            ), f"socialagent_runtime/{module} differs from its source"
+
+
+def test_editable_stand_in_loads_the_runtime_source(tmp_path: Path):
+    """With only ``src/`` on the path, as an editable install has it, the import is the real runtime.
+
+    Run in a fresh interpreter from outside the repo, because this suite's
+    conftest already put the runtime in ``sys.modules``.
+    """
+    script = textwrap.dedent(
+        """
+        import socialagent_runtime, socialagent_runtime.notify
+        print(socialagent_runtime.__file__)
+        print(socialagent_runtime.notify.__file__)
+        """
+    )
+    ran = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        env={**os.environ, **_DEV_ENV, "PYTHONPATH": str(REPO_ROOT / "src")},
+        capture_output=True,
+        text=True,
+    )
+    assert ran.returncode == 0, ran.stderr
+    assert ran.stdout.split() == [
+        str(_RUNTIME_SRC / "__init__.py"),
+        str(_RUNTIME_SRC / "notify.py"),
+    ]
+
+
+def test_dev_prefers_the_projects_copy_over_the_installed_runtime(tmp_path: Path):
+    """``socialagent dev`` runs the project's ``socialagent_runtime/``, not the CLI's.
+
+    The CLI's environment can import ``socialagent_runtime`` too now, and a
+    project pins its runtime by its copy, so the copy must win.
+    """
+    project = tmp_path / "bot"
+    (project / "socialagent_runtime").mkdir(parents=True)
+    (project / "socialagent_runtime" / "__init__.py").write_text('ORIGIN = "copy"\n')
+    (project / "agent.py").write_text(
+        "import socialagent_runtime\n\n\n"
+        "def invoke(payload, context=None):\n"
+        "    return socialagent_runtime.ORIGIN\n"
+    )
+    script = textwrap.dedent(
+        """
+        import sys
+        import socialagent_runtime
+        assert hasattr(socialagent_runtime, "SOCIALAGENT_VERSION")
+        del sys.modules["socialagent_runtime"]
+        from socialagent.cli.dev import _load_entrypoint
+        entrypoint, _ = _load_entrypoint(sys.argv[1])
+        print(entrypoint({}))
+        """
+    )
+    ran = subprocess.run(
+        [sys.executable, "-c", script, str(project / "agent.py")],
+        cwd=tmp_path,
+        env={**os.environ, **_DEV_ENV, "PYTHONPATH": str(REPO_ROOT / "src")},
+        capture_output=True,
+        text=True,
+    )
+    assert ran.returncode == 0, ran.stderr
+    assert ran.stdout.strip().splitlines()[-1] == "copy"
+
+
+def test_runtime_extra_matches_the_blueprints():
+    """``smart-socialagent[runtime]`` asks for what a scaffolded project installs.
+
+    Two specs for one dependency drift apart, and then the installed runtime
+    and the container's disagree about which bedrock-agentcore or Strands they
+    run on. Strands is compared on its own line because bedrock-agentcore's
+    ``strands-agents`` extra sets only a lower bound.
+    """
+    pinned = {"bedrock-agentcore", "strands-agents"}
+
+    def pins(lines: list[str]) -> dict[str, str]:
+        found = {}
+        for line in lines:
+            line = line.strip()
+            name = re.match(r"[A-Za-z0-9._-]*", line).group(0)
+            if name in pinned:
+                assert name not in found, f"{name} is pinned twice: {line}"
+                found[name] = line
+        return found
+
+    with (REPO_ROOT / "pyproject.toml").open("rb") as fh:
+        extra = pins(tomllib.load(fh)["project"]["optional-dependencies"]["runtime"])
+    assert set(extra) == pinned, f"the runtime extra in pyproject.toml pins {extra}"
+    for blueprint in sorted(_BLUEPRINT_NAMES):
+        lines = (REPO_ROOT / "blueprints" / blueprint / "requirements.txt").read_text()
+        required = pins(lines.splitlines())
+        assert required == extra, (
+            f"blueprints/{blueprint}/requirements.txt pins {required}, "
+            f"the runtime extra in pyproject.toml {extra}"
+        )
+
+
+def test_layer_build_leaves_the_runtime_out():
+    """The Lambda layer drops ``socialagent_runtime`` after ``pip install .``.
+
+    The wheel carries it now, and in the layer it would let a Lambda import the
+    agent-side package, which AGENTS.md's layering rule forbids.
+    """
+    commands = (REPO_ROOT / "infra-terraform" / "packaging.tf").read_text()
+    # Both buildspecs: the checkout's `pip install .` and package mode's spec.
+    for install_line in (
+        "pip install . -t /tmp/layer/python",
+        'pip install "$SDK_SPEC" -t /tmp/layer/python',
+    ):
+        install = commands.index(install_line)
+        strip = commands.index("rm -rf /tmp/layer/python/socialagent_runtime", install)
+        zip_up = commands.index("zip -r /tmp/socialagent-layer.zip python/", install)
+        assert strip < zip_up, install_line
+
+
 @pytest.mark.slow
 @pytest.mark.parametrize("archive", ["layer", "template-sync"])
-def test_archives_without_terraform_still_build_the_sdk(tmp_path: Path, archive: str):
-    """The Lambda layer and template-sync builds run `pip install .` on a tree without infra-terraform/.
+def test_archives_build_the_sdk(tmp_path: Path, archive: str):
+    """The Lambda layer and template-sync builds run ``pip install .`` on trees of their own.
 
-    That is why the wheel takes infra-terraform/ through an only-include: a
-    force-include whose source is missing aborts the build, and these archives
-    (packaging.tf, modules/templates) leave the Terraform out. Each tree here
-    holds what its archive holds.
+    Each tree here holds what its archive holds (``packaging.tf``,
+    ``modules/templates``), so a build input the archives leave out fails here
+    and not in CodeBuild. Neither carries infra-terraform/, which is why the
+    wheel takes it through an only-include: a force-include whose source is
+    missing aborts the build. The runtime package must still come along.
     """
     src = tmp_path / archive
     src.mkdir()
@@ -483,13 +634,18 @@ def test_archives_without_terraform_still_build_the_sdk(tmp_path: Path, archive:
     names = zipfile.ZipFile(_build_wheel(src, tmp_path / "out")).namelist()
     assert "socialagent/cli/__init__.py" in names
     assert not [n for n in names if n.startswith(_TF_IN_WHEEL)]
+    assert _wheel_runtime(names) == _runtime_modules()
+
+
+def _version() -> str:
+    return (REPO_ROOT / "VERSION").read_text().strip()
 
 
 def _published_spec() -> str:
     """The spec a CLI built from this checkout deploys: its distribution at its version."""
     with (REPO_ROOT / "pyproject.toml").open("rb") as fh:
         name = tomllib.load(fh)["project"]["name"]
-    return f"{name}=={(REPO_ROOT / 'VERSION').read_text().strip()}"
+    return f"{name}=={_version()}"
 
 
 # Plans the managed copy with mocked providers, where no checkout is above it.
@@ -646,6 +802,51 @@ def test_pip_installed_cli_runs_its_own_terraform(installed_cli: Path, tmp_path:
 
 
 @pytest.mark.slow
+def test_pip_installed_runtime_imports(built_wheel: Path, tmp_path: Path):
+    """``pip install smart-socialagent[runtime]`` gives an importable ``socialagent_runtime``.
+
+    From a venv and a working directory outside the repo, so nothing resolves
+    to the checkout. Its payload contract version must be the Lambda side's:
+    the webhook sends that value with every turn and the runtime refuses any
+    other.
+    """
+    from socialagent.constants import SOCIALAGENT_VERSION
+
+    venv = tmp_path / "venv"
+    subprocess.run(
+        [sys.executable, "-m", "venv", str(venv)], check=True, capture_output=True
+    )
+    bin_dir = _venv_bin(venv)
+    install = subprocess.run(
+        [str(bin_dir / "pip"), "install", "-q", f"{built_wheel}[runtime]"],
+        capture_output=True,
+        text=True,
+    )
+    assert install.returncode == 0, install.stderr[-3000:]
+
+    script = textwrap.dedent(
+        """
+        import socialagent_runtime, socialagent_runtime.notify
+        print(socialagent_runtime.__file__)
+        print(socialagent_runtime.SOCIALAGENT_VERSION)
+        """
+    )
+    work = tmp_path / "work"
+    work.mkdir()
+    ran = subprocess.run(
+        [str(bin_dir / "python"), "-c", script],
+        cwd=work,
+        env={**os.environ, **_DEV_ENV},
+        capture_output=True,
+        text=True,
+    )
+    assert ran.returncode == 0, ran.stderr[-3000:]
+    location, version = ran.stdout.split()
+    assert Path(location).resolve().is_relative_to(venv.resolve())
+    assert int(version) == SOCIALAGENT_VERSION
+
+
+@pytest.mark.slow
 def test_pip_installed_cli_scaffolds_and_lists(installed_cli: Path, tmp_path: Path):
     """A pip-installed socialagent can init a project and list recipes.
 
@@ -670,8 +871,9 @@ def test_pip_installed_cli_scaffolds_and_lists(installed_cli: Path, tmp_path: Pa
 
     project = work / "mybot"
     assert (project / "agent.py").is_file()
-    # The vendored copy is what lets the scaffolded project import socialagent_runtime.
-    assert (project / "socialagent_runtime" / "notify.py").is_file()
+    # The pin is what lets the scaffolded project import socialagent_runtime.
+    assert f"[runtime]=={_version()}" in (project / "requirements.txt").read_text()
+    assert not (project / "socialagent_runtime").exists()
 
     recipes = subprocess.run(
         [str(socialagent), "recipe", "list"], capture_output=True, text=True
@@ -722,17 +924,15 @@ def test_pip_installed_init_instructions_match_scaffold(
 
 
 def _make_runtime_venv(at: Path) -> Path:
-    """Create a venv with no ``socialagent`` installed; return its bin directory.
+    """Create a venv with nothing installed; return its bin directory.
 
     Deliberately bare, and deliberately one per blueprint rather than shared:
     the AgentCore container installs only that project's ``requirements.txt``
-    (see each blueprint's Dockerfile), never the SDK. A shared venv would let a
-    blueprint with an incomplete requirements.txt boot on packages some earlier
-    blueprint installed — which is exactly the bug this is meant to catch, since
-    all three currently declare identical dependencies.
-
-    Booting without ``socialagent`` also proves the scaffold does not quietly depend on
-    the SDK, which would work in a checkout and fail in the container.
+    (see each blueprint's Dockerfile), with the deploy's SDK wheel when there
+    is one. A shared venv would let a blueprint with an incomplete
+    requirements.txt boot on packages some earlier blueprint installed — which
+    is exactly the bug this is meant to catch, since all three currently
+    declare identical dependencies.
     """
     subprocess.run(
         [sys.executable, "-m", "venv", str(at)], check=True, capture_output=True
@@ -782,7 +982,9 @@ def _wait_until_serving(proc: subprocess.Popen, blueprint: str) -> None:
 
 @pytest.mark.slow
 @pytest.mark.parametrize("blueprint", sorted(_BLUEPRINT_NAMES))
-def test_scaffolded_project_boots(installed_cli: Path, tmp_path: Path, blueprint: str):
+def test_scaffolded_project_boots(
+    installed_cli: Path, built_wheel: Path, tmp_path: Path, blueprint: str
+):
     """Every blueprint scaffolds into a project that starts and serves /ping.
 
     Scaffolding files is not the same as scaffolding something that runs. A
@@ -794,6 +996,11 @@ def test_scaffolded_project_boots(installed_cli: Path, tmp_path: Path, blueprint
     Boots rather than imports because every blueprint calls ``app.run()`` at
     module level, so importing ``agent.py`` never returns. Readiness is the
     ``/ping`` endpoint each Dockerfile health-checks.
+
+    The project pins the SDK at this checkout's version, which no index may
+    have, so the install adds the wheel built here, as a deploy with
+    ``--sdk-wheel`` does in the image: pip takes the file for the pinned
+    version, and the agent imports ``socialagent_runtime`` from it.
     """
     # No port override exists, so these run one at a time. Under -p xdist they
     # would collide; skipping beats a confusing bind error.
@@ -816,9 +1023,18 @@ def test_scaffolded_project_boots(installed_cli: Path, tmp_path: Path, blueprint
     requirements = project / "requirements.txt"
     assert requirements.is_file(), f"'{blueprint}' scaffolded no requirements.txt"
 
+    # Nothing in the project can provide the runtime: it comes from the pin.
+    assert not (project / "socialagent_runtime").exists()
     runtime_venv = _make_runtime_venv(tmp_path / "runtime")
     deps = subprocess.run(
-        [str(runtime_venv / "pip"), "install", "-q", "-r", str(requirements)],
+        [
+            str(runtime_venv / "pip"),
+            "install",
+            "-q",
+            "-r",
+            str(requirements),
+            str(built_wheel),
+        ],
         capture_output=True,
         text=True,
     )

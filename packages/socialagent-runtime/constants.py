@@ -4,7 +4,7 @@
 """
 Shared constants for socialagent-runtime.
 
-Vendored alongside the other socialagent-runtime modules into agent projects.
+Shipped with the other socialagent-runtime modules as socialagent_runtime.
 Must stay in sync with src/socialagent/constants.py — the SOCIALAGENT_VERSION value
 is the contract between the Lambda side and the agent side.
 """

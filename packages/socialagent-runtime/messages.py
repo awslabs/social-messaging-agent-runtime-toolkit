@@ -6,7 +6,7 @@ Outbound message builders for use inside AgentCore Runtime.
 
 Each function returns a plain dict accepted by :func:`notify.send_message`.
 These mirror the builders in ``socialagent.messages`` but have no SDK dependency —
-safe to use from vendored socialagent_runtime code.
+safe to use from socialagent_runtime code.
 """
 
 from __future__ import annotations

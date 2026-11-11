@@ -10,7 +10,6 @@ Receives a WhatsApp message, echoes it back, and logs the conversation turn to A
 
 ```
 agent.py              # Agent entrypoint (AgentCore Runtime)
-socialagent_runtime/           # Vendored SMART agent package (copied by socialagent init)
 handlers/
   webhook.py          # Inbound WhatsApp messages (Lambda)
   notification.py     # Outbound message delivery (Lambda)
@@ -18,7 +17,7 @@ handlers/
   scheduler.py        # EventBridge scheduled events (Lambda)
   shared/             # Helpers packaged into all Lambda zips
 Dockerfile            # ARM64 container for AgentCore Runtime
-requirements.txt      # Python dependencies
+requirements.txt      # Python dependencies, plus the SDK pin socialagent init adds
 socialagent.dev.yaml         # Project config (local dev + deploy)
 ```
 

@@ -35,6 +35,8 @@ import pytest
 import yaml
 
 from socialagent.cli.blueprints import _BLUEPRINT_NAMES
+from socialagent.cli.runtime_cmd import runtime_requirement
+from tests._legacy_project import make_legacy
 
 pytestmark = pytest.mark.e2e
 
@@ -204,10 +206,11 @@ def test_init_scaffolds_standalone_project(ws, env, blueprint):
         "handlers/webhook.py",
         "handlers/event.py",
         "handlers/scheduler.py",
-        "socialagent_runtime/__init__.py",
-        "socialagent_runtime/notify.py",
     ):
         assert (project / rel).is_file(), rel
+    # The runtime comes from the package the project pins, not from a copy.
+    assert runtime_requirement() in (project / "requirements.txt").read_text()
+    assert not (project / "socialagent_runtime").exists()
     cfg = yaml.safe_load((project / "socialagent.dev.yaml").read_text())
     assert cfg["project"] == project.name
     assert not list(project.rglob("__pycache__"))
@@ -216,15 +219,17 @@ def test_init_scaffolds_standalone_project(ws, env, blueprint):
 
 
 def test_runtime_status_after_init_and_update_after_an_edit(ws, env):
-    # init stamps socialagent_runtime/; an edit makes status fail and update
-    # refuse (the edit is content no CLI shipped), until --force restores the
-    # CLI's copy, keeping the edited one as a backup.
+    # A new project passes status. As an older CLI scaffolded it (a copied
+    # runtime, no pin, the old Dockerfile) it fails; with an edit in the copy,
+    # update refuses (content no CLI shipped) until --force migrates it,
+    # keeping the edited copy as a backup.
     assert run("init", "my-bot", cwd=ws, env=env).returncode == 0
     project = ws / "my-bot"
     r = run("runtime", "status", cwd=project, env=env)
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "matches the runtime this CLI ships" in r.stdout
+    assert "this CLI's version" in r.stdout
 
+    make_legacy(project)
     notify = project / "socialagent_runtime" / "notify.py"
     notify.write_text(notify.read_text() + "\n# local edit\n")
     assert run("runtime", "status", cwd=project, env=env).returncode == 1
@@ -236,6 +241,7 @@ def test_runtime_status_after_init_and_update_after_an_edit(ws, env):
     assert r.returncode == 0, r.stdout + r.stderr
     assert run("runtime", "status", cwd=project, env=env).returncode == 0
     assert len(list((project / ".socialagent" / "runtime-backups").glob("*"))) == 1
+    assert not (project / "socialagent_runtime").exists()
 
 
 def test_init_defaults_to_minimal(ws, env):

@@ -263,15 +263,17 @@ def main() -> None:
 
     # socialagent secrets
     p_rt = sub.add_parser(
-        "runtime", help="Check or update the project's vendored socialagent_runtime/"
+        "runtime",
+        help="Check or update where the project's socialagent_runtime comes from",
     )
     rt_sub = p_rt.add_subparsers(dest="runtime_command")
     rt_sub.add_parser(
-        "status", help="Compare socialagent_runtime/ with this CLI's copy"
+        "status",
+        help="Check that the project pins the SDK at this CLI's version and has no copied runtime",
     )
     p_rt_update = rt_sub.add_parser(
         "update",
-        help="Replace socialagent_runtime/ with this CLI's copy (keeps a backup)",
+        help="Pin the SDK at this CLI's version and remove a copied socialagent_runtime/ (keeps a backup)",
     )
     p_rt_update.add_argument(
         "--yes", action="store_true", help="Do not ask for confirmation"
@@ -279,7 +281,7 @@ def main() -> None:
     p_rt_update.add_argument(
         "--force",
         action="store_true",
-        help="Also replace a copy this CLI has never shipped (newer or edited)",
+        help="Also remove a copy this CLI has never shipped (newer or edited)",
     )
 
     p_sec = sub.add_parser("secrets", help="Set secret values (never stored in files)")

@@ -13,8 +13,9 @@ import shutil
 import sys
 from pathlib import Path
 
+from socialagent.cli import _infra
 from socialagent.cli._errors import CliError
-from socialagent.cli.runtime_cmd import vendor_runtime
+from socialagent.cli.runtime_cmd import runtime_requirement, write_pin
 from socialagent.cli.blueprints import (
     list_blueprints,
     get_blueprint_dir,
@@ -32,19 +33,20 @@ PROJECT_NAME_PATTERN = r"^[a-z][a-z0-9-]{2,34}$"
 _PROJECT_NAME_RE = re.compile(PROJECT_NAME_PATTERN)
 
 
-def _copy_socialagent_runtime(dest: Path) -> None:
-    """Copy socialagent_runtime source into ``dest/socialagent_runtime/``, replacing any existing copy.
+def _pin_the_sdk(dest: Path) -> None:
+    """Pin the SDK, which provides ``socialagent_runtime``, in ``dest/requirements.txt``.
 
-    The copy carries a stamp with its content hash for a human reading the
-    directory; ``socialagent runtime status`` and the ``dev``/``deploy`` warnings
-    classify the copy by hashing it, with or without the stamp.
+    Appended at init rather than written into the blueprints, so each
+    blueprint's requirements.txt stays installable as it is, and the pin
+    always names the CLI that scaffolded the project.
     """
     try:
-        vendor_runtime(dest)
+        requirement = runtime_requirement()
+        write_pin(dest)
     except CliError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
-    print("  ✓ socialagent_runtime/ copied")
+    print(f"  ✓ requirements.txt pins {requirement}")
 
 
 def _find_repo_root(start: Path) -> Path | None:
@@ -138,8 +140,7 @@ def cmd_init(args: argparse.Namespace) -> None:
             text.replace("__project_name__", args.name), encoding="utf-8"
         )
 
-    # socialagent_runtime/
-    _copy_socialagent_runtime(project_dir)
+    _pin_the_sdk(project_dir)
 
     # The blueprint's own README.md is kept as-is. Nothing is written into
     # infra-terraform/: socialagent.dev.yaml is the project's only config and
@@ -152,21 +153,40 @@ def cmd_init(args: argparse.Namespace) -> None:
     )
     where = " in projects/" if repo_root else ""
     print(f"\nProject '{args.name}' created{where} (blueprint: {blueprint}).")
-    # Scaffolded projects ship requirements.txt, not pyproject.toml, so `uv sync`
-    # (which needs a pyproject.toml) is the wrong instruction here.
     print("\n1. Test locally:")
-    print(f"     cd {rel_path} && pip install -r requirements.txt")
-    print("     socialagent dev")
+    if repo_root:
+        # The checkout's own environment already has the SDK and the runtime
+        # (`uv sync` installs the checkout editable), at the checkout's
+        # version, which a package index may not have.
+        print(f"     cd {rel_path} && uv run socialagent dev")
+    else:
+        # Scaffolded projects ship requirements.txt, not pyproject.toml, so
+        # `uv sync` (which needs a pyproject.toml) is the wrong instruction here.
+        print(f"     cd {rel_path} && pip install -r requirements.txt")
+        print("     socialagent dev")
+        distribution = runtime_requirement().partition("[")[0]
+        if not _infra._installed_from_index(distribution):
+            print(
+                "   This CLI was not installed from a package index, so the version"
+                "\n   requirements.txt pins may not be published there: add the SDK"
+                "\n   wheel to the install (pip install -r requirements.txt <wheel>)."
+            )
     print("\n2. Configure: edit socialagent.dev.yaml (whatsapp.phone_number_id, ...)")
     print("\n3. Deploy to AWS:")
     print("     socialagent bootstrap        # once per account and stage")
     print("     socialagent deploy --plan    # review")
     print("     socialagent deploy")
-    if not repo_root:
+    if repo_root:
+        print(
+            "\n   From a SMART checkout, deploy builds the SDK wheel from the checkout"
+            "\n   and installs it in the Lambda layer and the agent."
+        )
+    else:
         # With no checkout, the Terraform this CLI ships builds the Lambda
         # layer from the published package (packaging.tf, package mode).
         print(
             "\n   Outside a SMART checkout, deploy runs the Terraform this CLI ships"
             "\n   and installs the SDK in AWS from the package index at this CLI's"
-            "\n   version; to deploy an unreleased build, add --sdk-wheel <wheel>."
+            "\n   version, in the Lambda layer and the agent; to deploy an"
+            "\n   unreleased build, add --sdk-wheel <wheel>."
         )

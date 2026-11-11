@@ -23,7 +23,8 @@ SMART has two distinct runtime layers that **never import from each other**. The
                     ▼
 ┌───────────────────────────────────────────────────────────┐
 │  Agent Runtime Package  (packages/socialagent-runtime/)             │
-│  Vendored as socialagent_runtime/ into each project by `socialagent init`. │
+│  Installed as socialagent_runtime from the socialagent     │
+│  wheel; each project pins it in requirements.txt.          │
 │  Runs inside the AgentCore Runtime container alongside the │
 │  developer's agent code.                                   │
 │  Provides: notify, state, scheduler, messages, phone,      │
@@ -41,7 +42,7 @@ Runs inside the Lambda functions. It provides:
 - `EUMSocialProvider` — the **only** code in the repo permitted to call `boto3.client("socialmessaging", ...)` for message delivery
 - The AgentCore Memory writer, per-user state table access, and the template registry
 
-At deploy time CodeBuild builds a shared Lambda layer from it, and each handler ships as a small zip on top of it (`infra-terraform/packaging.tf`). From a checkout the layer is `pip install .` of the repo source tree; with no checkout above the Terraform root (a pip-installed CLI's managed copy) it is the published package, pinned to the CLI's version and installed from PyPI as wheels only, or a wheel passed to `deploy --sdk-wheel`.
+At deploy time CodeBuild builds a shared Lambda layer from it, and each handler ships as a small zip on top of it (`infra-terraform/packaging.tf`). From a checkout the layer is `pip install .` of the repo source tree while the project still ships a copied runtime; once the project pins the SDK, `deploy` builds the checkout's wheel and the layer installs that. With no checkout above the Terraform root (a pip-installed CLI's managed copy) it is the published package, pinned to the CLI's version and installed from PyPI as wheels only, or a wheel passed to `deploy --sdk-wheel`. The layer removes `socialagent_runtime/` after the install, so a Lambda cannot import the agent-side package.
 
 ### Agent Runtime Package (`packages/socialagent-runtime/`)
 
@@ -59,13 +60,13 @@ It has **no dependency** on `src/socialagent/` or the provider.
 
 | Property | Lambda Control Layer | Agent Runtime Package |
 |----------|----------------------|------------------------|
-| Location | `src/socialagent/` | `packages/socialagent-runtime/` (vendored as `socialagent_runtime/`) |
+| Location | `src/socialagent/` | `packages/socialagent-runtime/` (installed as `socialagent_runtime`) |
 | Runs in | AWS Lambda functions | AgentCore Runtime container |
-| Packaging | Shared Lambda layer + per-handler zips | Physically copied into each project |
-| Installed via | Repo source tree (not PyPI) | `socialagent init` (vendored, not pip-installed) |
+| Packaging | Shared Lambda layer + per-handler zips | The same `smart-socialagent` wheel, installed in the agent image or zip package |
+| Installed via | The repo source tree, the published package or a wheel (see above) | The project's `requirements.txt`: `smart-socialagent[runtime]==<CLI version>`, plus the deploy's SDK wheel when there is one |
 | Imports the other? | No | No |
 
-`socialagent_runtime/` is **vendored** — `socialagent init` physically copies the directory into the scaffolded project. It is not `pip install socialagent-runtime`. Each scaffolded project under `projects/<name>/socialagent_runtime/` is an independent copy that must be kept in sync with the canonical `packages/socialagent-runtime/`.
+One wheel carries both: `pyproject.toml` maps `packages/socialagent-runtime/` to the top-level package `socialagent_runtime` (the files stay where they are; a checkout's editable install loads them through the stand-in `src/socialagent_runtime/__init__.py`). The `runtime` extra adds what the runtime needs beyond the SDK, `bedrock-agentcore[strands-agents]`. `socialagent init` writes the pin and copies no runtime; the agent build installs the pinned release from the package index, or the wheel `deploy --sdk-wheel` names (from a checkout, `deploy` builds the checkout's wheel for a pinned project), which pip takes over the index for the pinned version. A project an older CLI scaffolded carries its own copy in `socialagent_runtime/`, which its Dockerfile copies into the image, until `socialagent runtime update` replaces it with the package (see [Local development](local-dev.md) and the [CHANGELOG](../CHANGELOG.md)). The layers stay apart whatever ships them: `tests/test_architecture.py` keeps either from importing the other, and the agent image carries the Lambda code without ever importing it.
 
 The single permitted crossing point between the layers is at runtime, not at import time: agent-side `notify.*()` calls **invoke** the notification Lambda (a network call), which lives in the Lambda Control Layer. No Python import crosses the boundary in either direction.
 

@@ -46,7 +46,7 @@ from socialagent.cli import _infra, _schema, _tfvars
 from socialagent.cli._assets import socialagent_runtime_dir
 from socialagent.cli._errors import CliError
 from socialagent.cli._project import project_root
-from socialagent.cli.runtime_cmd import warn_if_stale
+from socialagent.cli.runtime_cmd import pinned, pinned_version, warn_if_stale
 from socialagent.cli._runner import Runner, require_on_path, run
 from socialagent.cli.config_file import (
     check_environment,
@@ -435,7 +435,7 @@ def schedule_handlers_without_lambda(
 
     With ``features.scheduler_lambda`` off, ``ctx.schedule`` and the agent's
     ``scheduler.schedule`` refuse to create a schedule for one. A schedule made
-    before they did (or by an agent whose vendored runtime predates it) fires
+    before they did (or by an agent whose runtime predates it) fires
     at the notification Lambda, which knows only the send operations and drops
     it; a one-shot schedule then deletes itself. The project code under the
     handlers directory (``_sources_under``) is read as text, since importing it
@@ -475,7 +475,7 @@ def warn_if_schedule_handlers_without_lambda(
 
 
 # Directories the preflight does not read, at any depth, because their code
-# never runs as the project's own: the vendored runtime, caches, installed
+# never runs as the project's own: a copied runtime, caches, installed
 # packages, virtualenvs (by name, or by the pyvenv.cfg a virtualenv holds
 # whatever its name) and hidden directories, which no import can name. Some of
 # them ship in the agent archive; reading them would only add noise.
@@ -841,18 +841,57 @@ def notice_deployment_metrics(stack: Stack) -> None:
     )
 
 
+def _checkout_wheel(stack: Stack, runner: Runner) -> Path | None:
+    """The SDK wheel built from the checkout, when the project needs one, else None.
+
+    A project that pins the SDK installs it in its agent build, at the
+    version this CLI wrote, which in a checkout is the checkout's VERSION: an
+    index may not have it, or have other code under it. So the checkout's
+    own build is installed in the agent, and through ``sdk_wheel_path`` in the
+    Lambda layer and the template sync too, so all three run one build. A
+    project that still ships a copied runtime gets nothing, and its stack
+    keeps building the layer from the checkout's source.
+    """
+    if not _infra.sdk_from_checkout(stack.tf_dir) or pinned(stack.project_dir) is None:
+        return None
+    repo = (stack.tf_dir / "..").resolve()
+    out_dir = stack.project_dir / ".socialagent" / "sdk-wheel"
+    print(f"SDK: building the wheel of the checkout at {repo}")
+    return _infra.build_checkout_wheel(repo, out_dir, runner)
+
+
+def _check_wheel_matches_pin(wheel: Path, project_dir: Path) -> None:
+    """Fail before Terraform when the agent build could not install *wheel*.
+
+    pip refuses a wheel whose version differs from the one requirements.txt
+    pins, so the build would fail in CodeBuild, after the layer was rebuilt.
+    """
+    pin = pinned(project_dir)
+    want = pinned_version(pin)
+    have = _infra.wheel_version(wheel)
+    if want is not None and want != have:
+        raise CliError(
+            f"requirements.txt pins {pin}, but the SDK wheel {wheel.name} is version "
+            f"{have}, and the agent build installs both. Move the pin with "
+            "`socialagent runtime update`, or pass a wheel of the pinned version."
+        )
+
+
 def deploy(args: Any, runner: Runner = run, account: str | None = None) -> None:
     """``socialagent deploy [--env] [--plan] [--yes] [--accept-data-loss] [--skip-model-check] [--sdk-wheel] [--tf-dir]``."""
     # A fake runner (the tests') runs nothing, so only the real one needs them.
     if runner is run:
         require_on_path("deploy", "terraform", *(() if args.plan else ("aws",)))
     stack = resolve(args.env, args.tf_dir, account)
-    wheel = getattr(args, "sdk_wheel", None)
-    sdk = _infra.sdk_tfvars(
-        stack.tf_dir, _infra.check_sdk_wheel(wheel) if wheel else None
-    )
     _check_no_auto_loaded_tfvars(stack)
     warn_if_stale(stack.project_dir)
+    wheel = getattr(args, "sdk_wheel", None)
+    sdk_wheel = (
+        _infra.check_sdk_wheel(wheel) if wheel else _checkout_wheel(stack, runner)
+    )
+    if sdk_wheel is not None:
+        _check_wheel_matches_pin(sdk_wheel, stack.project_dir)
+    sdk = _infra.sdk_tfvars(stack.tf_dir, sdk_wheel)
     warn_if_schedule_handlers_without_lambda(stack.config, stack.project_dir)
     warn_if_state_calls_without_table(stack.config, stack.project_dir)
     if not getattr(args, "skip_model_check", False):
