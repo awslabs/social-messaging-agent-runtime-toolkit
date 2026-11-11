@@ -515,7 +515,7 @@ scheduler_handler = app.scheduler_handler()
 
 ## socialagent-runtime Environment Variables
 
-These are read by `socialagent_runtime` modules inside AgentCore Runtime. All are set automatically by Terraform — you never set them manually. `socialagent_runtime` is the Agent Runtime Package: the `socialagent` wheel installs it, built from `packages/socialagent-runtime/`, and your project pins it in `requirements.txt` (`socialagent[runtime]==<CLI version>`, written by `socialagent init`). See [Architecture](architecture.md) for a full explanation of `socialagent_runtime` and what it provides.
+These are read by `socialagent_runtime` modules inside AgentCore Runtime. All are set automatically by Terraform — you never set them manually. `socialagent_runtime` is the Agent Runtime Package: the `socialagent` wheel installs it, built from `packages/socialagent-runtime/`, and your project pins it in `requirements.txt` (`smart-socialagent[runtime]==<CLI version>`, written by `socialagent init`). See [Architecture](architecture.md) for a full explanation of `socialagent_runtime` and what it provides.
 
 | Variable | Description |
 |----------|-------------|

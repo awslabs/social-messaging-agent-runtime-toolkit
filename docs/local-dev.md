@@ -11,7 +11,7 @@ uv run socialagent dev
 
 Run it from anywhere inside the project: `agent.py` and `handlers/` are found in the enclosing project directory.
 
-`socialagent dev` runs the agent in the CLI's own Python environment, so `socialagent_runtime` and its dependencies come from there. In a SMART checkout, `uv sync` at the repo root provides them (the checkout's editable install, at the checkout's code). From a pip install, install the project's `requirements.txt` into the CLI's environment (it pins `socialagent[runtime]` at the CLI's version), or `pip install "socialagent[runtime]"`; without them `dev` names that install instead of failing with a traceback. A project an older CLI scaffolded, which still carries its own `socialagent_runtime/`, runs that copy, as its image does, until `socialagent runtime update` replaces it with the package; `dev` warns about it.
+`socialagent dev` runs the agent in the CLI's own Python environment, so `socialagent_runtime` and its dependencies come from there. In a SMART checkout, `uv sync` at the repo root provides them (the checkout's editable install, at the checkout's code). From a pip install, install the project's `requirements.txt` into the CLI's environment (it pins `smart-socialagent[runtime]` at the CLI's version), or `pip install "smart-socialagent[runtime]"`; without them `dev` names that install instead of failing with a traceback. A project an older CLI scaffolded, which still carries its own `socialagent_runtime/`, runs that copy, as its image does, until `socialagent runtime update` replaces it with the package; `dev` warns about it.
 
 ```
 SMART Dev Mode — simulating +5215500000000

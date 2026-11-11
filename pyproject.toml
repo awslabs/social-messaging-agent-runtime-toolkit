@@ -31,9 +31,11 @@ dependencies = [
 
 [project.optional-dependencies]
 # What `import socialagent_runtime` needs beyond boto3, for the agent container
-# and not the CLI, so a plain install stays light. The same spec as every
+# and not the CLI, so a plain install stays light. The same pins as every
 # blueprint's requirements.txt; tests/test_cli_packaging.py keeps them equal.
-runtime = ["bedrock-agentcore[strands-agents]>=1.18.1,<2"]
+# strands-agents is pinned on its own because the runtime imports it directly
+# and bedrock-agentcore's extra sets only a lower bound, which admits Strands 2.
+runtime = ["bedrock-agentcore[strands-agents]>=1.18.1,<2", "strands-agents<2"]
 
 [project.urls]
 Homepage = "https://github.com/awslabs/social-messaging-agent-runtime-toolkit"

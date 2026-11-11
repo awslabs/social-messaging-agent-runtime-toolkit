@@ -62,8 +62,8 @@ It has **no dependency** on `src/socialagent/` or the provider.
 |----------|----------------------|------------------------|
 | Location | `src/socialagent/` | `packages/socialagent-runtime/` (installed as `socialagent_runtime`) |
 | Runs in | AWS Lambda functions | AgentCore Runtime container |
-| Packaging | Shared Lambda layer + per-handler zips | The same `socialagent` wheel, installed in the agent image or zip package |
-| Installed via | The repo source tree, the published package or a wheel (see above) | The project's `requirements.txt`: `socialagent[runtime]==<CLI version>`, plus the deploy's SDK wheel when there is one |
+| Packaging | Shared Lambda layer + per-handler zips | The same `smart-socialagent` wheel, installed in the agent image or zip package |
+| Installed via | The repo source tree, the published package or a wheel (see above) | The project's `requirements.txt`: `smart-socialagent[runtime]==<CLI version>`, plus the deploy's SDK wheel when there is one |
 | Imports the other? | No | No |
 
 One wheel carries both: `pyproject.toml` maps `packages/socialagent-runtime/` to the top-level package `socialagent_runtime` (the files stay where they are; a checkout's editable install loads them through the stand-in `src/socialagent_runtime/__init__.py`). The `runtime` extra adds what the runtime needs beyond the SDK, `bedrock-agentcore[strands-agents]`. `socialagent init` writes the pin and copies no runtime; the agent build installs the pinned release from the package index, or the wheel `deploy --sdk-wheel` names (from a checkout, `deploy` builds the checkout's wheel for a pinned project), which pip takes over the index for the pinned version. A project an older CLI scaffolded carries its own copy in `socialagent_runtime/`, which its Dockerfile copies into the image, until `socialagent runtime update` replaces it with the package (see [Local development](local-dev.md) and the [CHANGELOG](../CHANGELOG.md)). The layers stay apart whatever ships them: `tests/test_architecture.py` keeps either from importing the other, and the agent image carries the Lambda code without ever importing it.

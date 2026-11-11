@@ -24,7 +24,7 @@ my-bot/
 │   ├── crm.py
 │   └── inventory.py
 ├── prompts.py
-└── requirements.txt  # pins socialagent[runtime], which provides socialagent_runtime
+└── requirements.txt  # pins smart-socialagent[runtime], which provides socialagent_runtime
 ```
 
 ```python

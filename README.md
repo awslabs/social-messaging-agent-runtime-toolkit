@@ -156,7 +156,7 @@ projects/my-whatsapp-bot/
 │   ├── event.py          # External events — add @app.on_event here (API Gateway)
 │   └── scheduler.py      # Scheduled messages — add @app.on_schedule here (EventBridge)
 ├── Dockerfile
-└── requirements.txt      # Pins socialagent[runtime] at the CLI's version, which provides socialagent_runtime
+└── requirements.txt      # Pins smart-socialagent[runtime] at the CLI's version, which provides socialagent_runtime
 ```
 
 The `personal-assistant` and `appointment-scheduler` blueprints also ship a `templates.yaml` of WhatsApp message templates and a `src/` with their tools and skills.

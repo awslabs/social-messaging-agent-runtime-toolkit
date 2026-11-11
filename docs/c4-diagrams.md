@@ -180,7 +180,7 @@ graph TB
         bp3["minimal/<br/><i>no recipes</i>"]
     end
 
-    initcli["socialagent init &lt;name&gt;<br/><i>copies a blueprint as-is<br/>+ pins socialagent[runtime]</i>"]
+    initcli["socialagent init &lt;name&gt;<br/><i>copies a blueprint as-is<br/>+ pins smart-socialagent[runtime]</i>"]
     addcli["socialagent recipe add &lt;name&gt;<br/><i>copies tool.py + skill.md<br/>into the project (no overwrite)</i>"]
 
     bp1 -.->|"copied verbatim"| initcli

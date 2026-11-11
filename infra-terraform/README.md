@@ -47,7 +47,7 @@ social-messaging-agent-runtime-toolkit/
 │   └── sales-bot/
 │       ├── agent.py
 │       ├── handlers/
-│       ├── requirements.txt      ← pins socialagent[runtime] at the CLI's version
+│       ├── requirements.txt      ← pins smart-socialagent[runtime] at the CLI's version
 │       ├── templates.yaml
 │       ├── socialagent.dev.yaml  ← the project's configuration
 │       └── .socialagent/         ← generated tfvars + Terraform working folder (gitignored)

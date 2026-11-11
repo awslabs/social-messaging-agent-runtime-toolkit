@@ -9,7 +9,7 @@ This blueprint shows a stateful, catalog-driven conversation. The agent reads th
 1. Read this file and `SOCIALAGENT_GUIDE.md` before changing the project; the guide covers tools, skills, scheduling, notifications and deploys.
 2. Agent-side code (`agent.py`, `src/`) imports only `socialagent_runtime`, its own `src/` modules and libraries in `requirements.txt`; handler Lambdas (`handlers/`) import `socialagent` and `handlers/shared/`. Do not mix the two.
 3. A tool that sends a WhatsApp message during a turn uses `socialagent_runtime.notify` inside the entrypoint's `socialagent_notify_context()`; never call the notification Lambda directly from a tool.
-4. Do not copy or patch `socialagent_runtime`: it comes from the SDK package `requirements.txt` pins (`socialagent[runtime]==<version>`), and `socialagent runtime update` moves the pin to the CLI's version. Change behavior in your own code instead.
+4. Do not copy or patch `socialagent_runtime`: it comes from the SDK package `requirements.txt` pins (`smart-socialagent[runtime]==<version>`), and `socialagent runtime update` moves the pin to the CLI's version. Change behavior in your own code instead.
 5. Hard-code no account IDs, ARNs, phone numbers or model IDs; configuration lives in `socialagent.<env>.yaml`. The model is `MODEL_ID` under `agent.environment` there, which reaches the agent and the webhook together; `src/model.py` only names the default when it is unset, so do not edit it to change the model.
 6. Test locally with `socialagent dev` before deploying, and ask before `socialagent deploy`, `socialagent destroy` or anything that sends real messages.
 
