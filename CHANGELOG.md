@@ -4,6 +4,9 @@ All notable changes to SMART, the Social Messaging Agent Runtime Toolkit, are re
 
 ## [Unreleased]
 
+### Added
+- The `smart-socialagent` package also installs the agent runtime as the import package `socialagent_runtime`, built from `packages/socialagent-runtime/`, so `import socialagent_runtime` works after a `pip install` and in a checkout after `uv sync`. Its third-party dependencies come with the new `runtime` extra, `pip install "smart-socialagent[runtime]"`, which asks for the same `bedrock-agentcore[strands-agents]` and `strands-agents` pins as the blueprints' `requirements.txt`; a plain install stays as light as before. Nothing uses the installed copy yet: `socialagent init` still copies the runtime into each project, the project's container and `socialagent dev` still run that copy, and the Lambda layer leaves the package out. The pyproject change gives the Lambda layer a new source hash, so a stack's next deploy rebuilds the layer once with the same contents.
+
 ### Fixed
 - `personal-assistant` now passes `transcribe_languages` to the transcription call in its `on_media` hook, so the setting applies to its voice notes as it does to the default path. `handlers/` is project code, so an existing project adds `language_options=config.transcribe_languages,` to the `transcribe_audio` call in `handlers/webhook.py` by hand. The blueprint's YAML sets `transcribe_languages: [es-MX, en-US]`, which had no effect on its voice notes before this fix, so check that the list names your users' languages before you deploy the change.
 - The zip-mode agent archive leaves out the project's `infrastructure/` directory, like the Docker-mode archive. A zip-mode project with that directory gets a new archive hash, so its next deploy rebuilds the package once.

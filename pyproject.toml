@@ -29,6 +29,14 @@ dependencies = [
     "rich>=14.3.3",
 ]
 
+[project.optional-dependencies]
+# What `import socialagent_runtime` needs beyond boto3, for the agent container
+# and not the CLI, so a plain install stays light. The same pins as every
+# blueprint's requirements.txt; tests/test_cli_packaging.py keeps them equal.
+# strands-agents is pinned on its own because the runtime imports it directly
+# and bedrock-agentcore's extra sets only a lower bound, which admits Strands 2.
+runtime = ["bedrock-agentcore[strands-agents]>=1.18.1,<2", "strands-agents<2"]
+
 [project.urls]
 Homepage = "https://github.com/awslabs/social-messaging-agent-runtime-toolkit"
 Repository = "https://github.com/awslabs/social-messaging-agent-runtime-toolkit"
@@ -54,6 +62,21 @@ pattern = "^(?P<version>\\S+)$"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/socialagent"]
+# The agent runtime installs as the top-level package socialagent_runtime,
+# built from packages/socialagent-runtime/ in place: the CLI reads
+# that path's git history to tell a project's copy current or outdated, so the
+# files cannot move. An only-include with a source rewrite rather than a
+# force-include, because an only-include that is absent adds nothing (the
+# template-sync archive may not carry it) and it leaves out what .gitignore
+# drops, such as __pycache__/, where a force-include ships the whole tree.
+only-include = ["src/socialagent", "packages/socialagent-runtime"]
+sources = { "packages/socialagent-runtime" = "socialagent_runtime" }
+# Editable installs (`uv sync`) put src/ on the path, as `packages` did. hatch's
+# detection refuses the rename above (it can drop a source prefix, not change
+# one), so src/socialagent_runtime/ is a stand-in that loads
+# packages/socialagent-runtime/ live; it is outside the only-include, so no
+# wheel carries it.
+dev-mode-dirs = ["src"]
 
 # blueprints/, recipes/ and packages/socialagent-runtime/ are template-as-code that the
 # CLI copies into new projects. They live at the repo root, so without this the
