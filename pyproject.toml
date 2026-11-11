@@ -86,7 +86,7 @@ dev = [
     "moto[dynamodb]>=5.0",
     # The e2e tests run `socialagent dev`, which imports a scaffolded agent.py
     # in this interpreter. Same spec as the blueprints' requirements.txt.
-    "bedrock-agentcore[strands-agents]>=1.18.1",
+    "bedrock-agentcore[strands-agents]>=1.25.3",
 ]
 
 [tool.ruff.lint]
