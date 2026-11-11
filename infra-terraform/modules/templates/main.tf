@@ -101,6 +101,13 @@ data "archive_file" "template_source" {
     filename = "VERSION"
   }
 
+  # pyproject.toml names PYPI.md as the package readme, and hatchling refuses to
+  # build metadata without it, so `pip install .` here needs it too.
+  source {
+    content  = file("${dirname(var.socialagent_pyproject_path)}/PYPI.md")
+    filename = "PYPI.md"
+  }
+
   # Bundle the SDK source so CodeBuild can pip install from local.
   # Blueprints and recipes now live at the repo root (blueprints/, recipes/),
   # outside src/socialagent, so this fileset never picks them up. The cli/blueprints/

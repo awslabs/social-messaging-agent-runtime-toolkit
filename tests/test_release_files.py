@@ -39,7 +39,7 @@ def test_pyproject_reads_version_from_the_file():
 
 
 def test_installed_distribution_matches_the_file():
-    assert installed_version("socialagent") == VERSION
+    assert installed_version("smart-socialagent") == VERSION
 
 
 def test_cli_reports_the_file_version():

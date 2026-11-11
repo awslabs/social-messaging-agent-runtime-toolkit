@@ -1,6 +1,6 @@
 # 📱 Social Messaging Agent Runtime Toolkit
 
-*Short name: **SMART**. Python package and CLI: `socialagent`.*
+*Short name: **SMART**. On PyPI: [`smart-socialagent`](https://pypi.org/project/smart-socialagent/). CLI and Python package: `socialagent`.*
 
 > **The open-source toolkit to build, ship, and operate WhatsApp AI agents on AWS.** Bring your agent — SMART owns the channel.
 
@@ -8,6 +8,7 @@
 [![Security](https://github.com/awslabs/social-messaging-agent-runtime-toolkit/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/awslabs/social-messaging-agent-runtime-toolkit/actions/workflows/security.yml?query=branch%3Amain)
 ![Status](https://img.shields.io/badge/status-beta-orange)
 ![Version](https://img.shields.io/badge/version-2026.10.0-blue)
+[![PyPI](https://img.shields.io/pypi/v/smart-socialagent)](https://pypi.org/project/smart-socialagent/)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![IaC](https://img.shields.io/badge/IaC-Terraform-7B42BC)
 ![Runtime](https://img.shields.io/badge/AWS-Bedrock%20AgentCore-FF9900)
@@ -140,6 +141,8 @@ uv run socialagent deploy
 > The `bootstrap` step creates the Terraform state backend, once per account and stage.
 > The deploy also creates the deployment marker stack of the anonymous deployment counter (`socialagent deploy` prints a line saying so); `terraform.enable_deployment_metrics: false` in `socialagent.dev.yaml` turns it off ([what is emitted](#anonymous-operational-metrics)).
 > See [Getting Started](docs/getting-started.md) for the full walkthrough.
+
+The CLI is also on PyPI, without a clone: `pip install smart-socialagent` (the command and the import package are `socialagent`). From there `init` and `dev` work anywhere; `deploy` still needs a clone of this repo for its `infra-terraform/`, or `--tf-dir` pointing at one.
 
 `socialagent init` scaffolds everything you need:
 

@@ -14,6 +14,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -153,6 +154,57 @@ def test_plan_changes_nothing(checkout):
     assert (
         yaml.safe_load((project / "socialagent.dev.yaml").read_text())["outputs"] == {}
     )
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="fake terraform is a POSIX shell script"
+)
+def test_deploy_plan_prints_its_notice_before_terraform_in_a_log(checkout, tmp_path):
+    project, _ = checkout
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    terraform = bin_dir / "terraform"
+    terraform.write_text(
+        "#!/bin/sh\n"
+        'case "$2" in\n'
+        '  init|workspace|plan) echo "Terraform: $2" ;;\n'
+        "  show) echo '{\"resource_changes\": []}' ;;\n"
+        "  *) exit 1 ;;\n"
+        "esac\n"
+    )
+    terraform.chmod(0o755)
+    # Only replace the AWS account lookup and the external Terraform binary;
+    # CLI argument parsing, deployment preflight and the process runner are real.
+    code = f"""
+from unittest.mock import patch
+from socialagent.cli import main
+with patch("socialagent.cli._deploy.account_id", return_value={ACCOUNT!r}):
+    main()
+"""
+    env = dict(os.environ)
+    env.pop("PYTHONUNBUFFERED", None)
+    env.pop("TF_VAR_enable_deployment_metrics", None)
+    env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
+    log = tmp_path / "deploy.log"
+    with log.open("w") as output:
+        result = subprocess.run(
+            [sys.executable, "-c", code, "deploy", "--plan"],
+            cwd=project,
+            env=env,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            check=False,
+            timeout=30,
+        )
+    text = log.read_text()
+    assert result.returncode == 0, text
+    first_terraform = text.index("Terraform: init")
+    for line in (
+        "Planning my-bot (dev)",
+        "Anonymous deployment counter:",
+        "Variables:",
+    ):
+        assert text.index(line) < first_terraform, text
 
 
 def test_failed_apply_does_not_sync_outputs(checkout):

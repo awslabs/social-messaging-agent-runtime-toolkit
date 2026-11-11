@@ -12,6 +12,7 @@ import Link from "@cloudscape-design/components/link";
 import Box from "@cloudscape-design/components/box";
 import Alert from "@cloudscape-design/components/alert";
 import Flashbar from "@cloudscape-design/components/flashbar";
+import Modal from "@cloudscape-design/components/modal";
 import { api } from "@/api/client";
 import { deleteEach, deleteFlash, deleteStateKey, type DeleteFlash } from "@/api/bulk-delete";
 import { useApi } from "@/hooks/use-api";
@@ -23,6 +24,7 @@ type GlobalStateEntry = StateEntry & { stack: string };
 export default function StatePage({ navigate }: { navigate: (h: string) => void }) {
   const [filterText, setFilterText] = useState("");
   const [selectedItems, setSelectedItems] = useState<GlobalStateEntry[]>([]);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [flash, setFlash] = useState<DeleteFlash[]>([]);
   const { data: items, loading, error, refresh } = useApi<GlobalStateEntry[]>(() => api.listAllState());
@@ -38,7 +40,11 @@ export default function StatePage({ navigate }: { navigate: (h: string) => void 
   const phones = [...new Set((items ?? []).map((e) => e.phone))];
   const stacks = [...new Set((items ?? []).map((e) => e.stack))];
 
+  const selectedPhones = new Set(selectedItems.map((e) => e.phone)).size;
+  const selectedStacks = new Set(selectedItems.map((e) => e.stack)).size;
+
   const handleDelete = async () => {
+    setConfirmDelete(false);
     setDeleting(true);
     const outcome = await deleteEach(selectedItems, (e) => deleteStateKey(e.stack, e.phone, e.key));
     setDeleting(false);
@@ -49,6 +55,15 @@ export default function StatePage({ navigate }: { navigate: (h: string) => void 
 
   return (
     <SpaceBetween size="l">
+      <Modal visible={confirmDelete} onDismiss={() => setConfirmDelete(false)}
+        header={`Delete ${selectedItems.length} key(s)`}
+        footer={<SpaceBetween direction="horizontal" size="xs">
+          <Button variant="link" onClick={() => setConfirmDelete(false)}>Cancel</Button>
+          <Button variant="primary" onClick={handleDelete}>Delete selected</Button>
+        </SpaceBetween>}
+      >
+        <Alert type="warning">This will permanently delete {selectedItems.length} state key(s) of {selectedPhones} user(s) across {selectedStacks} stack(s). This cannot be undone.</Alert>
+      </Modal>
       {flash.length > 0 && <Flashbar items={flash.map((f, i) => ({ ...f, id: String(i), dismissible: true, onDismiss: () => setFlash([]) }))} />}
       {error && <Alert type="error">{error}</Alert>}
       <Table
@@ -60,7 +75,7 @@ export default function StatePage({ navigate }: { navigate: (h: string) => void 
         header={<Header variant="awsui-h1-sticky" counter={`(${(items ?? []).length} keys, ${phones.length} users, ${stacks.length} stacks)`}
           description="Per-user key-value state stored in DynamoDB across all stacks."
           actions={<SpaceBetween direction="horizontal" size="xs">
-            <Button disabled={selectedItems.length === 0 || !admin.allowed} disabledReason={admin.reason} loading={deleting} onClick={handleDelete}>Delete selected ({selectedItems.length})</Button>
+            <Button disabled={selectedItems.length === 0 || !admin.allowed} disabledReason={admin.reason} loading={deleting} onClick={() => setConfirmDelete(true)}>Delete selected ({selectedItems.length})</Button>
             <Button iconName="refresh" variant="icon" onClick={refresh} />
           </SpaceBetween>}
         >User state</Header>}

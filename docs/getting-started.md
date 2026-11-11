@@ -143,7 +143,7 @@ One WABA feeds one stack's topic. Two stacks on one WABA need two phones, and on
 
 ## 3. Deploy to AWS — `socialagent deploy`
 
-When you're ready, Terraform provisions everything: AgentCore Runtime (your agent), the Lambda functions, SNS, API Gateway, EventBridge Scheduler, and optionally a DynamoDB state table. You drive it from the project directory; the CLI finds `infra-terraform/` in the checkout, generates the Terraform variables from `socialagent.dev.yaml`, and runs Terraform with live output.
+When you're ready, Terraform provisions everything: AgentCore Runtime (your agent), the Lambda functions, SNS, API Gateway, EventBridge Scheduler, and optionally a DynamoDB state table. You drive it from the project directory; the CLI finds `infra-terraform/` in the checkout, generates the Terraform variables from `socialagent.dev.yaml`, and runs Terraform with live output. The CLI's header and notices appear before Terraform's output, including when you redirect output to a log file or pipe it to `tee`.
 
 Edit `socialagent.dev.yaml` first — at least `whatsapp.phone_number_id`. Any other variable in `infra-terraform/variables.tf` goes under `terraform:` by its Terraform name. Then:
 

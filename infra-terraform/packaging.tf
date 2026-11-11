@@ -34,7 +34,7 @@ locals {
   # of the wheel, the package sources, and the three trees it force-includes.
   # VERSION is where pyproject.toml reads the package version from; a `pip install .`
   # of this archive fails without it.
-  layer_root_files = ["pyproject.toml", "VERSION", "LICENSE", "NOTICE", ".gitignore"]
+  layer_root_files = ["pyproject.toml", "VERSION", "LICENSE", "NOTICE", "PYPI.md", ".gitignore"]
   layer_trees      = ["src/socialagent", "packages/socialagent-runtime", "blueprints", "recipes"]
 
   layer_tree_files = flatten([
