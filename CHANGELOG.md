@@ -17,6 +17,7 @@ All notable changes to SMART, the Social Messaging Agent Runtime Toolkit, are re
 ### Developer experience
 - Published on PyPI as `smart-socialagent` ([ADR-0008](docs/adr/0008-pypi-distribution-name.md)): `socialagent` collides with an existing project there. The command and the import package stay `socialagent`, and `deploy` still needs a clone of the repository for `infra-terraform/`. The package page (`PYPI.md`) opens with the beta and "AS IS" notice.
 - A Release workflow publishes to PyPI from a GitHub Release, through trusted publishing and a `pypi` environment with required reviewers; `CONTRIBUTING.md` has the steps.
+- A Labels workflow labels each pull request `docs-only`, `infra`, `runtime`, `console` or `ci` from the files it changes (`.github/labeler.yml`), so a reviewer sees what kind of review it needs before opening it; `CODEOWNERS` still routes by path. It runs on `pull_request_target` so pull requests from forks get labels too, checks out nothing, and can only read contents and write pull requests, so the five labels must exist in the repository before it runs.
 
 ## [2026.10.0] - 2026-11-05
 

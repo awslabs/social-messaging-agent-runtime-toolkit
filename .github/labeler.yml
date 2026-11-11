@@ -1,0 +1,50 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# What kind of review a pull request needs, from the files it changes; read by
+# .github/workflows/labels.yml. CODEOWNERS still decides who reviews. Globs are
+# minimatch, matched against the path from the repository root, dotfiles
+# included. tests/test_pr_labels.py fails when a top-level directory has no
+# "<dir>/**" glob here, so a new one needs a line.
+#
+# Markdown is documentation wherever it lives, so a pull request that changes
+# only infra-terraform/README.md is docs-only, not infra: the other labels
+# match a file only when it is not Markdown (all-globs-to-any-file with
+# "!**/*.md": one file must match both). A skill is the exception. It is
+# Markdown, but it is the agent's instructions, so it counts as runtime.
+
+docs-only:
+  - all:
+      - changed-files:
+          # any-glob-to-all-files needs one glob to match every file, so the
+          # documentation globs are one brace set: docs/a.png with README.md
+          # is still docs-only.
+          - any-glob-to-all-files: "{docs/**,**/*.md,LICENSE,NOTICE}"
+          - all-globs-to-all-files:
+              - "!recipes/*/skill.md"
+              - "!blueprints/*/src/skills/**"
+
+infra:
+  - changed-files:
+      - all-globs-to-any-file: ["infra-terraform/**", "!**/*.md"]
+
+# The CLI, the runtime package, the blueprints and recipes a project copies,
+# their tests, and what pins their dependencies and version.
+runtime:
+  - changed-files:
+      - all-globs-to-any-file:
+          - "{src/**,packages/**,blueprints/**,recipes/**,tests/**,pyproject.toml,uv.lock,VERSION}"
+          - "!**/*.md"
+      - any-glob-to-any-file:
+          - "recipes/*/skill.md"
+          - "blueprints/*/src/skills/**"
+
+console:
+  - changed-files:
+      - all-globs-to-any-file: ["socialagent-admin-console/**", "!**/*.md"]
+
+ci:
+  - changed-files:
+      - all-globs-to-any-file:
+          - "{.github/**,scripts/**,Makefile,.ash.yaml,.gitignore}"
+          - "!**/*.md"
