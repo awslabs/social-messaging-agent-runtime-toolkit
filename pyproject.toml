@@ -15,6 +15,12 @@ dependencies = [
     "rich>=14.3.3",
 ]
 
+[project.optional-dependencies]
+# What `import socialagent_runtime` needs beyond boto3, for the agent container
+# and not the CLI, so a plain install stays light. The same spec as every
+# blueprint's requirements.txt; tests/test_cli_packaging.py keeps them equal.
+runtime = ["bedrock-agentcore[strands-agents]>=1.18.1,<2"]
+
 [project.urls]
 Homepage = "https://github.com/awslabs/social-messaging-agent-runtime-toolkit"
 Repository = "https://github.com/awslabs/social-messaging-agent-runtime-toolkit"
@@ -40,17 +46,24 @@ pattern = "^(?P<version>\\S+)$"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/socialagent"]
-# infra-terraform/ is the stack's Terraform, which the CLI materializes into a
-# project's .socialagent/infra/ when there is no checkout to run it from
-# (socialagent/cli/_infra.py). It is an only-include with a source rewrite
-# rather than a force-include for two reasons. A force-include walks the whole
-# directory and ignores `exclude`, so a contributor's .terraform/ (provider
-# binaries), state and tfvars would ship. And a force-include whose source is
-# missing aborts the build, while the Lambda layer and template-sync archives
-# (packaging.tf, modules/templates) run `pip install .` on a tree without
-# infra-terraform/; an only-include that is absent adds nothing.
-only-include = ["src/socialagent", "infra-terraform"]
-sources = { "infra-terraform" = "socialagent/cli/_assets/infra-terraform" }
+# Two trees outside src/ ship through an only-include with a source rewrite
+# rather than a force-include. A force-include walks the whole directory and
+# ignores `exclude` and .gitignore, so a contributor's .terraform/ (provider
+# binaries), state, tfvars and __pycache__/ would ship. And a force-include
+# whose source is missing aborts the build, while the Lambda layer and
+# template-sync archives (packaging.tf, modules/templates) run `pip install .`
+# on a tree without infra-terraform/ (and the template-sync one may lack the
+# runtime); an only-include that is absent adds nothing.
+#
+# - infra-terraform/ is the stack's Terraform, which the CLI materializes into
+#   a project's .socialagent/infra/ when there is no checkout to run it from
+#   (socialagent/cli/_infra.py).
+# - The agent runtime installs as the top-level package socialagent_runtime,
+#   built from packages/socialagent-runtime/ in place: the CLI reads that
+#   path's git history to tell a project's copy current or outdated, so the
+#   files cannot move.
+only-include = ["src/socialagent", "packages/socialagent-runtime", "infra-terraform"]
+sources = { "packages/socialagent-runtime" = "socialagent_runtime", "infra-terraform" = "socialagent/cli/_assets/infra-terraform" }
 # What Terraform writes into its own directories (state, lock file, build
 # archives), deployment inputs that name an account (tfvars, backend configs,
 # envs/), stray credentials and logs, and the mocked plan tests, which run only
@@ -77,9 +90,12 @@ exclude = [
     "/infra-terraform/**/*.log",
     "/infra-terraform/**/*.swp",
 ]
-# Editable installs (`uv sync`) put src/ on the path, as `packages` did. Without
-# this, hatch's detection maps every .py it includes, and the source rewrite of
-# infra-terraform/modules/event-api/authorizer.py is one it refuses.
+# Editable installs (`uv sync`) put src/ on the path, as `packages` did.
+# Without this, hatch's detection maps every .py it includes, and refuses both
+# rewrites above: it can drop a source prefix, not change one (the runtime's
+# rename, and infra-terraform/modules/event-api/authorizer.py). So
+# src/socialagent_runtime/ is a stand-in that loads packages/socialagent-runtime/
+# live; it is outside the only-include, so no wheel carries it.
 dev-mode-dirs = ["src"]
 
 # blueprints/, recipes/ and packages/socialagent-runtime/ are template-as-code that the

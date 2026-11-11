@@ -1301,6 +1301,11 @@ dependencies = [
     { name = "rich" },
 ]
 
+[package.optional-dependencies]
+runtime = [
+    { name = "bedrock-agentcore", extra = ["strands-agents"] },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "bedrock-agentcore", extra = ["strands-agents"] },
@@ -1312,11 +1317,13 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "bedrock-agentcore", extras = ["strands-agents"], marker = "extra == 'runtime'", specifier = ">=1.18.1,<2" },
     { name = "boto3", specifier = ">=1.38.0" },
     { name = "cryptography", specifier = ">=46.0.5" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "rich", specifier = ">=14.3.3" },
 ]
+provides-extras = ["runtime"]
 
 [package.metadata.requires-dev]
 dev = [
