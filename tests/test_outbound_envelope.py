@@ -155,6 +155,72 @@ def test_notification_payload_cannot_redirect_from_data_phone():
     assert body["to"] == _SENDER
 
 
+@pytest.mark.asyncio
+async def test_reaction_payload_is_sent_as_whatsapp_reaction():
+    """The provider passes type=reaction through; builders never set envelope keys."""
+    p = _provider()
+    msg = OutboundMessage(
+        type="reaction",
+        payload={"reaction": {"message_id": "wamid.1", "emoji": "👍"}},
+    )
+    await p.send_message(_SENDER, msg)
+
+    assert p._client.send_whatsapp_message.call_count == 1
+    (body,) = _sent(p)
+    assert body == {
+        "messaging_product": "whatsapp",
+        "to": _SENDER,
+        "type": "reaction",
+        "reaction": {"message_id": "wamid.1", "emoji": "👍"},
+    }
+
+
+def test_webhook_drain_sends_queued_reaction_once_to_sender():
+    """A queued reaction is delivered once, to the conversation sender.
+
+    The agent-supplied phone is ignored (same pin as other in-band sends). Empty
+    agent text is a complete reply, so the reaction is the only WhatsApp send.
+    """
+    p = _provider()
+    p.parse_webhook = AsyncMock(
+        return_value=MagicMock(
+            id="wamid.in", sender=_SENDER, type=MessageType.TEXT, text="Hola"
+        )
+    )
+    p.send_typing = AsyncMock()
+    outbound = [
+        {
+            "operation": "send_message",
+            "phone": _ATTACKER,
+            "message": {
+                "type": "reaction",
+                "payload": {"reaction": {"message_id": "wamid.1", "emoji": "👍"}},
+            },
+        }
+    ]
+    config = SocialAgentConfig(
+        agent_runtime_arn="arn:x",
+        memory_id="mem-x",
+        provider="eum_social",
+        phone_number_id="pid",
+        outbound_gap_seconds=0,
+    )
+    with patch(
+        "socialagent.handlers.webhook._invoke_runtime",
+        return_value=("", outbound),
+    ):
+        make_webhook_handler(config, p)({"e": 1})
+
+    assert p._client.send_whatsapp_message.call_count == 1
+    (body,) = _sent(p)
+    assert body == {
+        "messaging_product": "whatsapp",
+        "to": _SENDER,
+        "type": "reaction",
+        "reaction": {"message_id": "wamid.1", "emoji": "👍"},
+    }
+
+
 def test_scheduled_message_payload_cannot_redirect_from_event_phone():
     p = _provider()
     handler = make_scheduler_handler(p, _memory(), {})

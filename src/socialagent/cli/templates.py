@@ -19,7 +19,7 @@ from socialagent.app import _make_provider
 from socialagent.cli import _schema
 from socialagent.cli._errors import CliError
 from socialagent.cli.config_file import find_config, load
-from socialagent.cli._project import project_root
+from socialagent.cli._project import find_project_root, project_root
 from socialagent.config import SocialAgentConfig
 from socialagent.templates.sync import sync_templates
 from socialagent.templates.validate import has_errors, validate_file
@@ -30,14 +30,19 @@ def _project_config(root: Path, env: str) -> dict:
     return load(find_config(root, env))
 
 
-def _templates_path(args: argparse.Namespace, root: Path, cfg: dict) -> str:
+def _configured_templates_path(args: argparse.Namespace, root: Path, cfg: dict) -> str:
+    """The templates path the user asked for, or "" when only the default applies."""
     yaml_templates = _schema.get(cfg, "whatsapp.templates")
     return (
         args.templates
         or (str(root / yaml_templates) if yaml_templates else "")
         or os.environ.get("TEMPLATES_PATH")
-        or str(root / "templates.yaml")
+        or ""
     )
+
+
+def _templates_path(args: argparse.Namespace, root: Path, cfg: dict) -> str:
+    return _configured_templates_path(args, root, cfg) or str(root / "templates.yaml")
 
 
 def _prefix(args: argparse.Namespace, cfg: dict) -> str:
@@ -70,8 +75,23 @@ def cmd_templates_validate(args: argparse.Namespace) -> None:
     """Execute ``socialagent templates validate``: local checks only, no AWS."""
     root = project_root()
     cfg = _project_config(root, args.env)
-    templates = _templates_path(args, root, cfg)
-    if not Path(templates).is_file():
+    configured = _configured_templates_path(args, root, cfg)
+    templates = configured or str(root / "templates.yaml")
+    path = Path(templates)
+    if not path.is_file():
+        # A project with no templates (the minimal blueprint writes none) has
+        # nothing to validate. A path someone named, a templates.yaml that is
+        # a directory or a broken symlink, and a run outside any project still
+        # fail: each is a mistake to report, not an empty project.
+        if (
+            not configured
+            and not os.path.lexists(templates)
+            and find_project_root() is not None
+        ):
+            print(f"No templates to check: {templates} does not exist")
+            return
+        if path.exists():
+            raise CliError(f"templates path is not a file: {templates}")
         raise CliError(f"templates file not found: {templates}")
     if _report(templates, _prefix(args, cfg), cfg):
         raise CliError(f"{templates} has errors that Meta would reject")
