@@ -743,7 +743,9 @@ def checkout_project(tmp_path, monkeypatch) -> Path:
     monkeypatch.setattr(_infra, "sdk_package_spec", lambda: SPEC)
     repo = tmp_path / "repo"
     (repo / "infra-terraform").mkdir(parents=True)
+    # What makes it a SMART checkout rather than any infra-terraform/ (_infra._is_checkout).
     (repo / "pyproject.toml").write_text("[project]\nname = 'smart-socialagent'\n")
+    (repo / "src" / "socialagent").mkdir(parents=True)
     (repo / "infra-terraform" / "main.tf").write_text("# root\n")
     (repo / "infra-terraform" / "variables.tf").write_text(
         (REPO_ROOT / "infra-terraform" / "variables.tf").read_text()
