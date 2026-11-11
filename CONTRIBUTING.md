@@ -78,6 +78,7 @@ You need Python 3.11 or later and [`uv`](https://docs.astral.sh/uv/getting-start
 | `packaging (pip install)` | `make test-packaging` | `pyproject.toml`, `src/socialagent/cli/_assets.py`, or anything under `blueprints/`, `recipes/` or `packages/socialagent-runtime/` |
 | `backend-test` | `make backend-test` | `socialagent-admin-console/backend/` |
 | `ui (test + build)` | `npm ci` in `socialagent-admin-console/`, then `make ui-test`, `make ui-build` and `make ui-smoke` | the admin console frontend, including that the dev server starts |
+| `Docs / build site` (workflow `docs.yml`) | `npm ci`, `npm test` and `npm run build` in `site/` (Node.js 22; the build fails on a broken internal link) | `docs/` or `site/` |
 | `terraform` | `terraform fmt -check -recursive` from the repository root, then `make tf-validate` | any `.tf` file |
 | `terraform-minimum` | `make tf-validate-roots` with Terraform 1.7.x: init and validate of the three roots, without the mocked plans | any `.tf` file |
 
