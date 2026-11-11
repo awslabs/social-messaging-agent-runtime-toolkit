@@ -356,19 +356,28 @@ def _layer_archive() -> tuple[list[str], list[str]]:
 
 
 def _template_sync_archive() -> tuple[list[str], list[str]]:
-    """The repo-root files and trees the template-sync archive zips.
+    """The repo-root files and trees the template-sync archive zips in a checkout.
 
     The files are the literal ``filename = ...`` entries of the archive's
     ``source`` blocks, less ``templates.yaml`` (the project's file, from
-    ``var.templates_path``, which ``pip install .`` never reads); the
-    interpolated ones belong to the dynamic blocks that carry the SDK's
-    ``*.py`` and the trees ``main.tf`` passes as ``force_included_dirs``.
+    ``var.templates_path``, which ``pip install .`` never reads) and the
+    blocks only package mode zips (``for_each = var.sdk_from_checkout ? [] :
+    ...``, the install manifest); the interpolated ones belong to the dynamic
+    blocks that carry the SDK's ``*.py`` and the trees ``main.tf`` passes as
+    ``force_included_dirs``.
     """
     infra = REPO_ROOT / "infra-terraform"
     archive = _hcl_block(
         (infra / "modules" / "templates" / "main.tf").read_text(),
         'data "archive_file" "template_source"',
     )
+    package_only = re.compile(
+        r"^\s*for_each\s*=\s*var\.sdk_from_checkout\s*\?\s*\[\]", re.M
+    )
+    for match in reversed(list(re.finditer(r'dynamic\s+"source"\s*\{', archive))):
+        end = _hcl_balanced(archive, match.end() - 1)
+        if package_only.search(archive[match.start() : end]):
+            archive = archive[: match.start()] + archive[end:]
     files = [
         name
         for name in re.findall(r'^\s*filename\s*=\s*"([^"]+)"', archive, re.M)
