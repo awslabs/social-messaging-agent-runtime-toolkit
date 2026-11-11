@@ -1,0 +1,48 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Arms auto-merge on a Dependabot pull request that raises a Python or npm
+# dependency by a patch or minor version. Auto-merge merges only once every
+# required check passes and the code owner review that branch protection asks
+# for is in, so this workflow takes no review decision: it removes the second
+# trip to merge a change that CI and a maintainer have already cleared.
+#
+# Left manual on purpose: majors, whose breaking changes CI does not describe;
+# GitHub Actions, because a new action version runs with the repository's
+# permissions the moment it is merged and no check on the pull request can
+# prove it safe; and Terraform provider ceilings, which are planned migrations.
+# The 7-day cooldown in dependabot.yml still applies to what is armed here.
+#
+# Needs Settings > General > Pull Requests > Allow auto-merge.
+name: Dependabot auto-merge
+
+on: pull_request
+
+permissions:
+  contents: read
+
+jobs:
+  auto-merge:
+    name: arm auto-merge
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Arm auto-merge for a patch or minor Python or npm update
+        if: >-
+          (steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-minor') &&
+          (steps.metadata.outputs.package-ecosystem == 'pip' ||
+          steps.metadata.outputs.package-ecosystem == 'uv' ||
+          steps.metadata.outputs.package-ecosystem == 'npm_and_yarn')
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr merge --auto --merge "$PR_URL"
