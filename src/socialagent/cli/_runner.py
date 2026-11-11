@@ -26,6 +26,7 @@ import shlex
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -104,6 +105,10 @@ def run(
     argv = [str(c) for c in cmd]
     shown = shlex.join(argv)
     pipe = subprocess.PIPE if capture else None
+    # A child writes directly to inherited file descriptors, ahead of Python's
+    # buffered output when stdout is a file or pipe (for example, in CI).
+    sys.stdout.flush()
+    sys.stderr.flush()
     try:
         proc = subprocess.Popen(  # noqa: S603 — argv list, no shell
             argv,

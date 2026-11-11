@@ -113,9 +113,9 @@ locals {
           - if [ -n "$SDK_WHEEL_KEY" ]; then mkdir -p /tmp/sdk-wheel && aws s3 cp "s3://$OUTPUT_BUCKET/$SDK_WHEEL_KEY" /tmp/sdk-wheel/; fi
           # Quoted: unquoted, YAML reads the trailing ":all:" as a mapping key.
           - 'pip install "$SDK_SPEC" -t /tmp/layer/python --quiet --upgrade --no-cache-dir --only-binary=:all:'
-          # The wheel also installs the agent runtime, which runs only in the
-          # AgentCore container. Kept out of the layer so a Lambda import of it
-          # fails, as the two-layer rule in AGENTS.md expects.
+          # The agent runtime runs only in the AgentCore container. If the
+          # installed SDK brings it, it is kept out of the layer so a Lambda
+          # import of it fails, as the two-layer rule in AGENTS.md expects.
           - rm -rf /tmp/layer/python/socialagent_runtime
           - |
             if [ "$HAS_TEMPLATES" = "true" ]; then
