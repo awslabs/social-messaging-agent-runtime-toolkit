@@ -4,8 +4,8 @@
 """Packaging tests — the CLI must work from a pip install, not just a checkout.
 
 ``socialagent init`` and ``socialagent recipe add`` copy data directories (``blueprints/``,
-``recipes/``, ``packages/socialagent-runtime/``) that live at the repo root, outside the
-``src/socialagent`` package. Every other test in this suite runs from the checkout,
+``recipes/``) that live at the repo root, outside the ``src/socialagent`` package, and
+``runtime status`` hashes a leftover runtime copy against ``packages/socialagent-runtime/``. Every other test in this suite runs from the checkout,
 where those paths resolve; a pip-installed CLI has no repo root above it, so a
 wheel missing that data leaves ``socialagent init`` broken for every external user
 while the whole suite stays green.
@@ -588,11 +588,15 @@ def test_archives_build_the_sdk(tmp_path: Path, archive: str):
     assert _wheel_runtime(names) == _runtime_modules()
 
 
+def _version() -> str:
+    return (REPO_ROOT / "VERSION").read_text().strip()
+
+
 def _published_spec() -> str:
     """The spec a CLI built from this checkout deploys: its distribution at its version."""
     with (REPO_ROOT / "pyproject.toml").open("rb") as fh:
         name = tomllib.load(fh)["project"]["name"]
-    return f"{name}=={(REPO_ROOT / 'VERSION').read_text().strip()}"
+    return f"{name}=={_version()}"
 
 
 # Plans the managed copy with mocked providers, where no checkout is above it.
@@ -818,8 +822,9 @@ def test_pip_installed_cli_scaffolds_and_lists(installed_cli: Path, tmp_path: Pa
 
     project = work / "mybot"
     assert (project / "agent.py").is_file()
-    # The vendored copy is what lets the scaffolded project import socialagent_runtime.
-    assert (project / "socialagent_runtime" / "notify.py").is_file()
+    # The pin is what lets the scaffolded project import socialagent_runtime.
+    assert f"[runtime]=={_version()}" in (project / "requirements.txt").read_text()
+    assert not (project / "socialagent_runtime").exists()
 
     recipes = subprocess.run(
         [str(socialagent), "recipe", "list"], capture_output=True, text=True
@@ -870,17 +875,15 @@ def test_pip_installed_init_instructions_match_scaffold(
 
 
 def _make_runtime_venv(at: Path) -> Path:
-    """Create a venv with no ``socialagent`` installed; return its bin directory.
+    """Create a venv with nothing installed; return its bin directory.
 
     Deliberately bare, and deliberately one per blueprint rather than shared:
     the AgentCore container installs only that project's ``requirements.txt``
-    (see each blueprint's Dockerfile), never the SDK. A shared venv would let a
-    blueprint with an incomplete requirements.txt boot on packages some earlier
-    blueprint installed — which is exactly the bug this is meant to catch, since
-    all three currently declare identical dependencies.
-
-    Booting without ``socialagent`` also proves the scaffold does not quietly depend on
-    the SDK, which would work in a checkout and fail in the container.
+    (see each blueprint's Dockerfile), with the deploy's SDK wheel when there
+    is one. A shared venv would let a blueprint with an incomplete
+    requirements.txt boot on packages some earlier blueprint installed — which
+    is exactly the bug this is meant to catch, since all three currently
+    declare identical dependencies.
     """
     subprocess.run(
         [sys.executable, "-m", "venv", str(at)], check=True, capture_output=True
@@ -930,7 +933,9 @@ def _wait_until_serving(proc: subprocess.Popen, blueprint: str) -> None:
 
 @pytest.mark.slow
 @pytest.mark.parametrize("blueprint", sorted(_BLUEPRINT_NAMES))
-def test_scaffolded_project_boots(installed_cli: Path, tmp_path: Path, blueprint: str):
+def test_scaffolded_project_boots(
+    installed_cli: Path, built_wheel: Path, tmp_path: Path, blueprint: str
+):
     """Every blueprint scaffolds into a project that starts and serves /ping.
 
     Scaffolding files is not the same as scaffolding something that runs. A
@@ -942,6 +947,11 @@ def test_scaffolded_project_boots(installed_cli: Path, tmp_path: Path, blueprint
     Boots rather than imports because every blueprint calls ``app.run()`` at
     module level, so importing ``agent.py`` never returns. Readiness is the
     ``/ping`` endpoint each Dockerfile health-checks.
+
+    The project pins the SDK at this checkout's version, which no index may
+    have, so the install adds the wheel built here, as a deploy with
+    ``--sdk-wheel`` does in the image: pip takes the file for the pinned
+    version, and the agent imports ``socialagent_runtime`` from it.
     """
     # No port override exists, so these run one at a time. Under -p xdist they
     # would collide; skipping beats a confusing bind error.
@@ -964,9 +974,18 @@ def test_scaffolded_project_boots(installed_cli: Path, tmp_path: Path, blueprint
     requirements = project / "requirements.txt"
     assert requirements.is_file(), f"'{blueprint}' scaffolded no requirements.txt"
 
+    # Nothing in the project can provide the runtime: it comes from the pin.
+    assert not (project / "socialagent_runtime").exists()
     runtime_venv = _make_runtime_venv(tmp_path / "runtime")
     deps = subprocess.run(
-        [str(runtime_venv / "pip"), "install", "-q", "-r", str(requirements)],
+        [
+            str(runtime_venv / "pip"),
+            "install",
+            "-q",
+            "-r",
+            str(requirements),
+            str(built_wheel),
+        ],
         capture_output=True,
         text=True,
     )

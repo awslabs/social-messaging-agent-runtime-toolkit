@@ -16,7 +16,6 @@ Use it as a starting point for any "browse → pick → confirm → remind" flow
 
 ```
 agent.py                    # Agent entrypoint (Strands + ContextRefresher hook)
-socialagent_runtime/                 # Vendored SMART agent package
 src/
   __init__.py
   catalog.py                # Domain data: listings with addresses, slots, resolvers
@@ -35,8 +34,8 @@ handlers/
   event.py                 # External events — visit_cancelled (Lambda)
   scheduler.py             # Scheduled events — visit_reminder (Lambda)
   shared/                  # Helpers packaged into all Lambda zips
-Dockerfile                 # ARM64 container (copies agent.py + src/ + socialagent_runtime/)
-requirements.txt           # Python dependencies
+Dockerfile                 # ARM64 container (copies agent.py + src/, installs requirements.txt)
+requirements.txt           # Python dependencies, plus the SDK pin socialagent init adds
 socialagent.dev.yaml              # Project config
 templates.yaml             # WhatsApp templates (visit_reminder, visit_reminder_es, visit_cancelled_by_business)
 ```

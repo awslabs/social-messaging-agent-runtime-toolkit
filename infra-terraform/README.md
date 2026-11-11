@@ -37,17 +37,17 @@ The agent source Terraform uploads for that build is your project folder without
 
 ## Deployment Model
 
-The SMART checkout holds the SDK (`src/socialagent/`), the agent runtime package (`packages/socialagent-runtime/`), this Terraform root, and your projects under `projects/`. Each project carries its own configuration in `socialagent.<env>.yaml`; nothing project-specific lives in `infra-terraform/`. The `socialagent` wheel ships this directory too (without `tftest/`, state, tfvars or `.terraform/`), and a CLI run outside a checkout copies it into the project's `.socialagent/infra/<version>/`; there is no checkout above that copy, so `packaging.tf` builds the Lambda layer and the template sync from the published package (package mode: `sdk_package_spec`, which `socialagent deploy` sets to the CLI's own version, or a wheel in `sdk_wheel_path`, installed with `pip install --only-binary=:all:`) instead of the SDK source beside this directory, which a checkout uses ([Getting Started](../docs/getting-started.md#3-deploy-to-aws--socialagent-deploy)).
+The SMART checkout holds the SDK (`src/socialagent/`), the agent runtime package (`packages/socialagent-runtime/`), this Terraform root, and your projects under `projects/`. Each project carries its own configuration in `socialagent.<env>.yaml`; nothing project-specific lives in `infra-terraform/`. The `socialagent` wheel ships this directory too (without `tftest/`, state, tfvars or `.terraform/`), and a CLI run outside a checkout copies it into the project's `.socialagent/infra/<version>/`; there is no checkout above that copy, so `packaging.tf` builds the Lambda layer and the template sync from the published package (package mode: `sdk_package_spec`, which `socialagent deploy` sets to the CLI's own version, or a wheel in `sdk_wheel_path`, installed with `pip install --only-binary=:all:`) instead of the SDK source beside this directory, which a checkout uses until its project pins the SDK, when `socialagent deploy` builds the checkout's wheel and passes it as `sdk_wheel_path`. The agent build (`modules/runtime/codebuild.tf`) installs the same wheel beside the project's `requirements.txt` ([Getting Started](../docs/getting-started.md#3-deploy-to-aws--socialagent-deploy)).
 
 ```
 social-messaging-agent-runtime-toolkit/
 ├── src/socialagent/              ← SDK (built into the Lambda layer)
-├── packages/socialagent-runtime/ ← agent-side helpers (vendored by socialagent init)
+├── packages/socialagent-runtime/ ← agent-side helpers (installed from the same wheel as socialagent_runtime)
 ├── projects/                     ← your projects (created by socialagent init)
 │   └── sales-bot/
 │       ├── agent.py
 │       ├── handlers/
-│       ├── socialagent_runtime/
+│       ├── requirements.txt      ← pins socialagent[runtime] at the CLI's version
 │       ├── templates.yaml
 │       ├── socialagent.dev.yaml  ← the project's configuration
 │       └── .socialagent/         ← generated tfvars + Terraform working folder (gitignored)

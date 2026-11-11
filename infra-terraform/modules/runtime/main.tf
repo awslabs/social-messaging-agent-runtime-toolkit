@@ -61,6 +61,12 @@ variable "dockerfile_path" {
   default     = "Dockerfile"
 }
 
+variable "sdk_wheel_path" {
+  description = "A local SDK wheel the agent build installs with the project's requirements.txt, so the agent runs the same unreleased build as the Lambda layer. The root validates it."
+  type        = string
+  default     = ""
+}
+
 # ── Shared artifacts bucket (optional) ──────────────────────────────
 variable "shared_artifacts_bucket" {
   description = "When set, use this shared bucket for agent-source/agent-code instead of per-stack buckets."
@@ -86,8 +92,11 @@ locals {
   effective_agent_code_bucket   = local.use_shared_artifacts ? var.shared_artifacts_bucket : (local.is_zip ? aws_s3_bucket.agent_code[0].id : "")
   agent_source_key_prefix       = local.use_shared_artifacts ? "${var.artifacts_key_prefix}/agent-source/" : ""
   agent_code_key_prefix         = local.use_shared_artifacts ? "${var.artifacts_key_prefix}/agent-code/" : ""
-  # Content-hash image tag to force AgentCore re-pull on code changes
-  image_tag = local.is_docker ? "v${replace(replace(substr(data.archive_file.agent_source[0].output_base64sha256, 0, 12), "/", "_"), "+", "-")}" : var.image_tag
+  # Content-hash image tag to force AgentCore re-pull on code changes. A wheel
+  # is part of the image without being part of the source archive, so its MD5
+  # joins the hash; without one the tag is the archive's alone, as it always was.
+  image_source_hash = local.is_docker ? (var.sdk_wheel_path == "" ? data.archive_file.agent_source[0].output_base64sha256 : base64sha256("${data.archive_file.agent_source[0].output_base64sha256} ${local.sdk_wheel_md5}")) : ""
+  image_tag         = local.is_docker ? "v${replace(replace(substr(local.image_source_hash, 0, 12), "/", "_"), "+", "-")}" : var.image_tag
 }
 
 data "aws_caller_identity" "current" {}

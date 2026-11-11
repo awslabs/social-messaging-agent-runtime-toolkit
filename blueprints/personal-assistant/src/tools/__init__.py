@@ -96,7 +96,8 @@ def _one_shot_timing(delay_minutes: int, at_datetime: str, timezone: str) -> dic
     A time with no UTC offset is a wall-clock time in ``timezone``, which
     EventBridge applies with the offset in force on that date. Without a
     timezone it would be read as UTC, so it is refused instead. ``timezone`` is
-    passed only when set, which a vendored runtime older than it still takes.
+    passed only when set, which an older runtime (a copied one, or an earlier
+    pinned release) still takes.
     """
     if not at_datetime:
         return {"delay_minutes": delay_minutes or 1}

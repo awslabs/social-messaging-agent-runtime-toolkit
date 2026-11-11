@@ -9,7 +9,7 @@ This blueprint shows a stateful, catalog-driven conversation. The agent reads th
 1. Read this file and `SOCIALAGENT_GUIDE.md` before changing the project; the guide covers tools, skills, scheduling, notifications and deploys.
 2. Agent-side code (`agent.py`, `src/`) imports only `socialagent_runtime`, its own `src/` modules and libraries in `requirements.txt`; handler Lambdas (`handlers/`) import `socialagent` and `handlers/shared/`. Do not mix the two.
 3. A tool that sends a WhatsApp message during a turn uses `socialagent_runtime.notify` inside the entrypoint's `socialagent_notify_context()`; never call the notification Lambda directly from a tool.
-4. Do not edit `socialagent_runtime/`: it is a vendored copy that `socialagent runtime update` replaces. Change behavior in your own code instead.
+4. Do not copy or patch `socialagent_runtime`: it comes from the SDK package `requirements.txt` pins (`socialagent[runtime]==<version>`), and `socialagent runtime update` moves the pin to the CLI's version. Change behavior in your own code instead.
 5. Hard-code no account IDs, ARNs, phone numbers or model IDs; configuration lives in `socialagent.<env>.yaml`. The model is `MODEL_ID` under `agent.environment` there, which reaches the agent and the webhook together; `src/model.py` only names the default when it is unset, so do not edit it to change the model.
 6. Test locally with `socialagent dev` before deploying, and ask before `socialagent deploy`, `socialagent destroy` or anything that sends real messages.
 
@@ -18,8 +18,8 @@ This blueprint shows a stateful, catalog-driven conversation. The agent reads th
 | Path | What it is |
 |------|-----------|
 | `agent.py` | The agent entrypoint running inside the AgentCore Runtime. Builds a Strands `Agent` (Bedrock model from `src/model.py`) with a `ContextRefresher` hook that builds the system prompt once per turn from fresh booking state, the listings, and available slots, and keeps it unchanged within the turn. Includes a defensive OpenTelemetry patch. Wraps the turn in `socialagent_notify_context()` and returns `SocialAgentResponse`. |
-| `requirements.txt` | Python dependencies for the agent container (`bedrock-agentcore[strands-agents]`, `boto3`, `aws-opentelemetry-distro`). |
-| `Dockerfile` | Builds the ARM64 AgentCore Runtime image — copies `agent.py`, `src/`, and vendored `socialagent_runtime/`, installs requirements, runs under `opentelemetry-instrument`. |
+| `requirements.txt` | Python dependencies for the agent container (`bedrock-agentcore[strands-agents]`, `boto3`, `aws-opentelemetry-distro`), and the SDK pin `socialagent init` adds, which provides `socialagent_runtime`. |
+| `Dockerfile` | Builds the ARM64 AgentCore Runtime image — installs requirements (with the deploy's SDK wheel, when there is one, from `wheels/`), copies `agent.py` and `src/`, runs under `opentelemetry-instrument`. |
 | `socialagent.dev.yaml` | Project config for local dev and deploy (project name, region, environment, `phone_number_id`). `socialagent config sync` fills in `outputs`. |
 | `templates.yaml` | WhatsApp templates for this stack (`visit_reminder`, its Spanish twin `visit_reminder_es`, `visit_cancelled_by_business`). The registry keys templates by name, so each language is its own template; the booking stores the language of the message that confirmed it and the reminder handler picks the template from it. Sync with `socialagent templates sync`. |
 | `src/` | Agent-side code that runs inside the runtime container. |
@@ -37,7 +37,7 @@ This blueprint shows a stateful, catalog-driven conversation. The agent reads th
 | `handlers/event.py` | `@app.on_event("visit_cancelled")` — business-side cancellation: writes a system note to memory, clears booking state, cancels the reminder, notifies the user. |
 | `handlers/shared/` | Code packaged into every handler Lambda zip; import as `from shared... import ...`. Lambda-side helpers only — never agent tools or skills. |
 
-> Note: `socialagent init` also copies the vendored `socialagent_runtime/` package into the project root (`notify`, `state`, `scheduler`, `messages`, `phone`, `config`), which the tools in `src/tools/` call during a turn.
+> Note: `socialagent_runtime` is installed from the SDK package `requirements.txt` pins, not copied into the project (`notify`, `state`, `scheduler`, `messages`, `phone`, `config`), which the tools in `src/tools/` call during a turn.
 
 ## Extension points
 

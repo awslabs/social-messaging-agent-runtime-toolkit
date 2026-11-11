@@ -183,7 +183,7 @@ Any other variable in `infra-terraform/variables.tf`, under its Terraform name, 
 | `shared_artifacts_bucket` | — | Same, for ephemeral build artifacts (layer builds, agent source, template sync). Docker deployments only (`deployment_type: docker`, the default): a `zip` deployment does not support it yet, as the [worked example](#worked-example-several-stacks-on-shared-buckets) explains |
 | `admin_registry_bucket`, `admin_registry_prefix` | — | Register the stack with the [admin console](admin-console.md#how-a-stack-gets-into-the-console) |
 | `sdk_package_spec` | — | The SDK package the Lambda layer and the template sync install in CodeBuild, from PyPI, wheels only, as an exact `<distribution>==<version>` pin (a range, a wildcard or a bare name fails the plan). With no SMART checkout above the Terraform root, `deploy` and `destroy` set it to the CLI's own distribution and version, and a plan without it (or `sdk_wheel_path`) fails. In a checkout it is unset, and the layer is built from the checkout's source; setting it there installs the package instead ([Getting Started](getting-started.md#3-deploy-to-aws--socialagent-deploy)) |
-| `sdk_wheel_path` | — | A local SDK wheel to install instead of `sdk_package_spec`, to test a build before it is published; `deploy --sdk-wheel <path>` sets it. It is uploaded to the stack's layer-build and template-sync artifacts under a key carrying its MD5, so a rebuilt wheel rebuilds the layer; its dependencies still come from PyPI |
+| `sdk_wheel_path` | — | A local SDK wheel to install instead of `sdk_package_spec`, to test a build before it is published; `deploy --sdk-wheel <path>` sets it, and `deploy` from a checkout sets it to the checkout's own wheel when the project pins the SDK. It is uploaded to the stack's layer-build, template-sync and agent build artifacts under a key carrying its MD5, so a rebuilt wheel rebuilds the layer and the agent; the agent installs it beside `requirements.txt`, whose pin must name the wheel's version. Its dependencies still come from PyPI |
 
 `variables.tf` documents the rest. `deploy`, `destroy` and `config tfvars` check each key against `variables.tf` first: a key that is not a variable there (a misspelling included), that duplicates a first-class field, or that is `secrets` fails the command instead of being ignored. `status` does not validate; it only reads outputs.
 
@@ -515,7 +515,7 @@ scheduler_handler = app.scheduler_handler()
 
 ## socialagent-runtime Environment Variables
 
-These are read by `socialagent_runtime` modules inside AgentCore Runtime. All are set automatically by Terraform — you never set them manually. `socialagent_runtime` is the Agent Runtime Package: `socialagent init` vendors it into your project as `socialagent_runtime/` (a physical copy of `packages/socialagent-runtime/`), so it is not pip-installed. See [Architecture](architecture.md) for a full explanation of `socialagent_runtime` and what it provides.
+These are read by `socialagent_runtime` modules inside AgentCore Runtime. All are set automatically by Terraform — you never set them manually. `socialagent_runtime` is the Agent Runtime Package: the `socialagent` wheel installs it, built from `packages/socialagent-runtime/`, and your project pins it in `requirements.txt` (`socialagent[runtime]==<CLI version>`, written by `socialagent init`). See [Architecture](architecture.md) for a full explanation of `socialagent_runtime` and what it provides.
 
 | Variable | Description |
 |----------|-------------|

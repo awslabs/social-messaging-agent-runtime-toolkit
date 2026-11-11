@@ -56,7 +56,7 @@ def recipes_dir() -> Path:
 
 
 def socialagent_runtime_dir() -> Path:
-    """Source of the ``socialagent_runtime`` package vendored into each new project."""
+    """Source of the ``socialagent_runtime`` package, which a project's leftover copy is hashed against."""
     return _resolve("socialagent-runtime", "packages/socialagent-runtime")
 
 

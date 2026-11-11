@@ -11,6 +11,8 @@ uv run socialagent dev
 
 Run it from anywhere inside the project: `agent.py` and `handlers/` are found in the enclosing project directory.
 
+`socialagent dev` runs the agent in the CLI's own Python environment, so `socialagent_runtime` and its dependencies come from there. In a SMART checkout, `uv sync` at the repo root provides them (the checkout's editable install, at the checkout's code). From a pip install, install the project's `requirements.txt` into the CLI's environment (it pins `socialagent[runtime]` at the CLI's version), or `pip install "socialagent[runtime]"`; without them `dev` names that install instead of failing with a traceback. A project an older CLI scaffolded, which still carries its own `socialagent_runtime/`, runs that copy, as its image does, until `socialagent runtime update` replaces it with the package; `dev` warns about it.
+
 ```
 SMART Dev Mode — simulating +5215500000000
 Type messages as the WhatsApp user. Ctrl+C or /quit to exit.
@@ -47,7 +49,7 @@ You: Hola
 | `SCHEDULER_ROLE_ARN` | `__socialagent_dev__` | placeholder; dev mode is decided by `NOTIFICATION_LAMBDA_ARN` |
 | `SCHEDULER_LAMBDA_ARN` | `__socialagent_dev__`, or empty when `socialagent.<env>.yaml` turns `features.scheduler_lambda` off | set from the YAML, whatever the shell has; empty, scheduling refuses what the deployed stack would refuse (see Scheduled Tasks) |
 
-4. State and inbox are shared across terminals through files in `{tempdir}/socialagent-dev-<uid>/`, so multiple `socialagent dev` sessions for different phones, run by the same user, see each other's writes. The directory is created 0700 and its files 0600, and a `socialagent-dev-<uid>` that is a symlink or belongs to another user is refused, so on a shared host another user can neither read these files nor plant them. A project whose vendored `socialagent_runtime/` has no `_devfiles.py` keeps its state and sessions at fixed names directly in the temp dir until `socialagent runtime update` replaces the copy.
+4. State and inbox are shared across terminals through files in `{tempdir}/socialagent-dev-<uid>/`, so multiple `socialagent dev` sessions for different phones, run by the same user, see each other's writes. The directory is created 0700 and its files 0600, and a `socialagent-dev-<uid>` that is a symlink or belongs to another user is refused, so on a shared host another user can neither read these files nor plant them. A project whose copied `socialagent_runtime/` has no `_devfiles.py` keeps its state and sessions at fixed names directly in the temp dir until `socialagent runtime update` replaces the copy.
 5. Memory resets on each `socialagent dev` run — conversation history does not persist between runs. `/reset` clears the conversation, state and inbox mid-run.
 6. Each turn renders in the order WhatsApp delivers it: a `typing…` indicator while the agent works (tool calls appear inline as `⚙ tool_name`), then any queued attachments (buttons, lists, media), then the reply text.
 

@@ -318,8 +318,8 @@ class FiringRecord:
                 "no_time",
                 "A schedule with no scheduled_time ran, so a repeated delivery "
                 "of it would run again. A schedule created before this SDK "
-                "version, or by an agent whose vendored socialagent_runtime/ "
-                "predates it, has none: cancel it and create it again.",
+                "version, or by an agent whose socialagent_runtime predates "
+                "it, has none: cancel it and create it again.",
             )
             return Delivery.UNRECORDED
         pk, name = firing_record_key(schedule_id, when)

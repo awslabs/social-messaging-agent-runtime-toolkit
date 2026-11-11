@@ -98,10 +98,12 @@ exclude = [
 # live; it is outside the only-include, so no wheel carries it.
 dev-mode-dirs = ["src"]
 
-# blueprints/, recipes/ and packages/socialagent-runtime/ are template-as-code that the
-# CLI copies into new projects. They live at the repo root, so without this the
-# wheel ships the CLI but none of the data it needs and `socialagent init` fails on a
-# pip install. socialagent/cli/_assets.py resolves these packaged paths first.
+# blueprints/ and recipes/ are template-as-code that the CLI copies into new
+# projects, and packages/socialagent-runtime/ is what `socialagent runtime status`
+# hashes a project's leftover copy of the runtime against. They live at the repo
+# root, so without this the wheel ships the CLI but none of the data it needs and
+# `socialagent init` fails on a pip install. socialagent/cli/_assets.py resolves
+# these packaged paths first.
 [tool.hatch.build.targets.wheel.force-include]
 "blueprints" = "socialagent/cli/_assets/blueprints"
 "recipes" = "socialagent/cli/_assets/recipes"

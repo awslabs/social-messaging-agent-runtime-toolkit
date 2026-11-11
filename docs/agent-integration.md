@@ -9,7 +9,7 @@
 - [Using State from the Agent](#using-state-from-the-agent)
 - [Sending Notifications from the Agent](#sending-notifications-from-the-agent)
 
-SMART (Social Messaging Agent Runtime Toolkit) is framework-agnostic. Your agent runs inside AgentCore Runtime and receives a structured payload from SMART. The `socialagent_runtime` package (vendored into your project by `socialagent init`) provides memory, state, scheduling, and notification helpers.
+SMART (Social Messaging Agent Runtime Toolkit) is framework-agnostic. Your agent runs inside AgentCore Runtime and receives a structured payload from SMART. The `socialagent_runtime` package (installed from the SDK release your project's `requirements.txt` pins) provides memory, state, scheduling, and notification helpers.
 
 > See [Architecture](architecture.md) for a full explanation of the two-layer model and how `socialagent_runtime` fits in.
 
@@ -24,7 +24,7 @@ my-bot/
 │   ├── crm.py
 │   └── inventory.py
 ├── prompts.py
-└── socialagent_runtime/
+└── requirements.txt  # pins socialagent[runtime], which provides socialagent_runtime
 ```
 
 ```python

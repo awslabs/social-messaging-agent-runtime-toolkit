@@ -16,7 +16,6 @@ A general-purpose WhatsApp assistant with conversation memory, per-user state, s
 
 ```
 agent.py                    # Agent entrypoint (Strands + AgentCore Runtime)
-socialagent_runtime/                 # Vendored SMART agent package
 src/
   __init__.py
   skills.py                 # Skill loader with frontmatter parsing
@@ -38,8 +37,8 @@ handlers/
   event.py                 # External events (Lambda)
   scheduler.py             # Scheduled events — reminders, tasks (Lambda)
   shared/                  # Helpers packaged into all Lambda zips
-Dockerfile                 # ARM64 container (copies agent.py + src/ + socialagent_runtime/)
-requirements.txt           # Python dependencies
+Dockerfile                 # ARM64 container (copies agent.py + src/, installs requirements.txt)
+requirements.txt           # Python dependencies, plus the SDK pin socialagent init adds
 socialagent.dev.yaml              # Project config
 templates.yaml             # WhatsApp message templates (reminder, task_completed)
 ```

@@ -9,7 +9,7 @@ This blueprint wires the full SMART message path (inbound webhook, outbound noti
 1. Read this file and `SOCIALAGENT_GUIDE.md` before changing the project; the guide covers tools, skills, scheduling, notifications and deploys.
 2. Agent-side code (`agent.py`, `src/`) imports only `socialagent_runtime`, its own `src/` modules and libraries in `requirements.txt`; handler Lambdas (`handlers/`) import `socialagent` and `handlers/shared/`. Do not mix the two.
 3. This agent has no tools. If you add one that sends a WhatsApp message during a turn, wrap the entrypoint's agent call in `socialagent_notify_context()` and return its queue in `SocialAgentResponse` (see `SOCIALAGENT_GUIDE.md`); never call the notification Lambda directly from a tool.
-4. Do not edit `socialagent_runtime/`: it is a vendored copy that `socialagent runtime update` replaces. Change behavior in your own code instead.
+4. Do not copy or patch `socialagent_runtime`: it comes from the SDK package `requirements.txt` pins (`socialagent[runtime]==<version>`), and `socialagent runtime update` moves the pin to the CLI's version. Change behavior in your own code instead.
 5. Hard-code no account IDs, ARNs, phone numbers or model IDs; configuration lives in `socialagent.<env>.yaml`.
 6. Test locally with `socialagent dev` before deploying, and ask before `socialagent deploy`, `socialagent destroy` or anything that sends real messages.
 
@@ -18,8 +18,8 @@ This blueprint wires the full SMART message path (inbound webhook, outbound noti
 | Path | What it is |
 |------|-----------|
 | `agent.py` | The agent entrypoint that runs inside the AgentCore Runtime. Defines a `BedrockAgentCoreApp`, an `@app.entrypoint async def invoke(payload, context)` that echoes `payload["prompt"]`, logs the turn to AgentCore Memory via `create_memory_client`, and returns `{"result": ...}`. This is the file you replace with your own agent logic. |
-| `requirements.txt` | Python dependencies installed into the agent runtime container (`bedrock-agentcore[strands-agents]`, `boto3`, `aws-opentelemetry-distro`). Add your agent's libraries here. |
-| `Dockerfile` | Builds the ARM64 container image for the AgentCore Runtime. Copies `agent.py` and the vendored `socialagent_runtime/` package, installs requirements, and starts the app under `opentelemetry-instrument`. |
+| `requirements.txt` | Python dependencies installed into the agent runtime container (`bedrock-agentcore[strands-agents]`, `boto3`, `aws-opentelemetry-distro`), and the SDK pin `socialagent init` adds, which provides `socialagent_runtime`. Add your agent's libraries here. |
+| `Dockerfile` | Builds the ARM64 container image for the AgentCore Runtime. Installs requirements (with the deploy's SDK wheel, when there is one, from `wheels/`), copies `agent.py`, and starts the app under `opentelemetry-instrument`. |
 | `socialagent.dev.yaml` | Project config for local dev and deploy (project name, region, environment, deployment type, `phone_number_id`). `socialagent config sync` populates `outputs` from Terraform. |
 | `handlers/` | The Lambda Control Layer handlers. Each file builds an `SocialAgentApp` from `SocialAgentConfig.from_env()` and exports a `handler`. These run inside AWS Lambda, not the agent container. |
 | `handlers/webhook.py` | Inbound WhatsApp messages (via SNS). Parses the message and invokes the AgentCore Runtime. |
@@ -28,7 +28,7 @@ This blueprint wires the full SMART message path (inbound webhook, outbound noti
 | `handlers/event.py` | External events via API Gateway. Contains a commented `@app.on_event` example. |
 | `handlers/shared/` | Code packaged into every handler Lambda zip. Import it as `from shared.my_module import ...`. Use it for Lambda-side helpers (event parsing, CRM adapters) — never agent tools or skills. |
 
-> Note: `socialagent init` also copies the vendored `socialagent_runtime/` package into the project root. It is the Agent Runtime Package (`notify`, `state`, `scheduler`, `messages`, `phone`, `config`) your agent calls during a turn.
+> Note: `socialagent_runtime` is installed from the SDK package `requirements.txt` pins, not copied into the project. It is the Agent Runtime Package (`notify`, `state`, `scheduler`, `messages`, `phone`, `config`) your agent calls during a turn.
 
 ## Extension points
 

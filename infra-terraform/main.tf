@@ -384,6 +384,7 @@ module "runtime" {
   deployment_type          = var.deployment_type
   dockerfile_path          = var.dockerfile_path
   image_tag                = var.agent_image_tag
+  sdk_wheel_path           = var.sdk_wheel_path
 
   authorizer_discovery_url   = var.authorizer_discovery_url
   authorizer_allowed_clients = var.authorizer_allowed_clients

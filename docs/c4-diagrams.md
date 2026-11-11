@@ -158,14 +158,11 @@ graph LR
 
 ## Level 3: Scaffolding model (build-time)
 
-SMART source is organized into distinct build-time roles. This is a scaffolding model —
-the shipped runtime only contains the Lambda Control Layer plus the copies produced by
-`socialagent init` and `socialagent recipe add`. Recipes and blueprints are never imported at runtime;
-they are templates copied into a project.
+SMART source is organized into distinct build-time roles. Blueprints and recipes are a scaffolding model: they are templates copied into a project by `socialagent init` and `socialagent recipe add`, never imported at runtime. The agent runtime is not copied: the `socialagent` wheel installs it as `socialagent_runtime`, and each project pins that release in its `requirements.txt`.
 
 ```mermaid
 graph TB
-    subgraph L1["Agent Runtime Package (vendored, never pip-installed)"]
+    subgraph L1["Agent Runtime Package (installed from the socialagent wheel)"]
         agent["packages/socialagent-runtime/<br/><i>state, scheduler, notify,<br/>messages, phone</i><br/><b>Transport primitives only</b>"]
     end
 
@@ -183,13 +180,13 @@ graph TB
         bp3["minimal/<br/><i>no recipes</i>"]
     end
 
-    initcli["socialagent init &lt;name&gt;<br/><i>copies a blueprint as-is<br/>+ vendors socialagent_runtime/</i>"]
+    initcli["socialagent init &lt;name&gt;<br/><i>copies a blueprint as-is<br/>+ pins socialagent[runtime]</i>"]
     addcli["socialagent recipe add &lt;name&gt;<br/><i>copies tool.py + skill.md<br/>into the project (no overwrite)</i>"]
 
     bp1 -.->|"copied verbatim"| initcli
     bp2 -.->|"copied verbatim"| initcli
     bp3 -.->|"copied verbatim"| initcli
-    agent -.->|"vendored"| initcli
+    agent -.->|"pip install from the pin"| dplY
     rr -.->|"copied on demand"| addcli
     rv -.->|"copied on demand"| addcli
     ri -.->|"copied on demand"| addcli
@@ -199,7 +196,7 @@ graph TB
 
     project["📁 Scaffolded project<br/><i>projects/&lt;your-bot&gt;/</i>"]
 
-    project --> dplY["Dockerfile + agent.py<br/>+ socialagent_runtime/<br/>+ src/tools/*.py<br/>+ src/skills/*.md"]
+    project --> dplY["Dockerfile + agent.py<br/>+ requirements.txt (the pin)<br/>+ src/tools/*.py<br/>+ src/skills/*.md"]
     dplY --> runtime["☁️ Bedrock AgentCore Runtime"]
 
     style L1 fill:#1E293B,color:#fff,stroke:#6366F1
@@ -223,7 +220,7 @@ graph TB
 
 | Role | Can user modify? | Mechanism |
 |---|---|---|
-| Agent Runtime Package (`packages/socialagent-runtime/`) | Yes — it's vendored into the project | `socialagent init` copies it into the project as `socialagent_runtime/`; each project owns its copy |
+| Agent Runtime Package (`packages/socialagent-runtime/`) | No — it is a dependency | Installed as `socialagent_runtime` from the release `requirements.txt` pins (`socialagent init` writes the pin, `socialagent runtime update` moves it); a project an older CLI scaffolded carries a copy until `runtime update` replaces it |
 | Recipes (`recipes/*`) | Yes, their own copy | Copied into the enclosing project on demand by `socialagent recipe add` (never overwrites existing files) |
 | Blueprints (`blueprints/*`) | Yes, their own copy | Copied verbatim at `socialagent init` |
 

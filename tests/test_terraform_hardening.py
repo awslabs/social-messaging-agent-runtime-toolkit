@@ -1465,9 +1465,19 @@ def test_agent_source_archive_applies_the_filters(archive: str):
     excludes = re.search(r"^\s*excludes\s*=\s*(.*)$", block, re.MULTILINE)
 
     assert excludes, f"archive_file.{archive} has no excludes"
-    assert "local.agent_source_filter_excludes" in excludes.group(1)
+    expression = _agent_source_excludes(tf, excludes.group(1))
+    assert "local.agent_source_filter_excludes" in expression
     for name in ("__pycache__", ".venv", "node_modules", ".git", ".socialagent"):
-        assert f'"{name}"' in excludes.group(1), f"{archive} no longer excludes {name}"
+        assert f'"{name}"' in expression, f"{archive} no longer excludes {name}"
+
+
+def _agent_source_excludes(tf: str, assigned: str) -> str:
+    """The expression an archive's ``excludes`` is, through the shared local."""
+    if assigned.strip() != "local.agent_source_excludes":
+        return assigned
+    start = re.search(r"^\s*agent_source_excludes\s*=\s*", tf, re.M)
+    assert start, "agent_source_excludes is gone from modules/runtime/codebuild.tf"
+    return _balanced(tf, start.end())
 
 
 def test_agent_source_archives_exclude_the_same_names():
@@ -1480,7 +1490,9 @@ def test_agent_source_archives_exclude_the_same_names():
         block = _block(tf, f'data "archive_file" "{archive}"')
         excludes = re.search(r"^\s*excludes\s*=\s*(.*)$", block, re.MULTILINE)
         assert excludes, f"archive_file.{archive} has no excludes"
-        names[archive] = sorted(re.findall(r'"([^"]*)"', excludes.group(1)))
+        names[archive] = sorted(
+            re.findall(r'"([^"]*)"', _agent_source_excludes(tf, excludes.group(1)))
+        )
 
     assert names["agent_source_zip"] == names["agent_source"]
 
@@ -3265,9 +3277,14 @@ def test_zip_package_rebuilds_when_the_build_recipe_changes():
         )
     resource = tf[tf.index('resource "null_resource" "build_zip_package"') :]
     build_recipe = _assigned(_block(resource, "triggers = {"), "build_recipe")
+    # The SDK wheel's MD5 joins the recipe only when there is a wheel, so a
+    # stack without one keeps the hash it had.
     assert build_recipe == (
-        f"sha256(jsonencode([{recipe['image']}, {recipe['buildspec']}]))"
-    ), "build_zip_package does not re-run when the build image or buildspec changes"
+        f"sha256(jsonencode(concat([{recipe['image']}, {recipe['buildspec']}], "
+        'var.sdk_wheel_path == "" ? [] : [local.sdk_wheel_md5])))'
+    ), (
+        "build_zip_package does not re-run when the build image, buildspec or wheel changes"
+    )
 
 
 @pytest.mark.parametrize(
@@ -3373,3 +3390,197 @@ def test_runtime_role_has_no_social_messaging_actions():
     for name in ("agentcore_platform", "agentcore_custom"):
         block = _block(main, f'resource "aws_iam_role_policy" "{name}"')
         assert "social-messaging:" not in block, name
+
+
+# =============================================================================
+# The agent installs socialagent_runtime from the SDK package
+# =============================================================================
+
+
+def _docker_buildspec_text() -> str:
+    tf = _code(CODEBUILD_TF.read_text())
+    return _heredoc(tf, 'resource "aws_codebuild_project" "agent_image"', "buildspec")
+
+
+def _docker_buildspec(wheel: bool) -> dict:
+    """The docker build's buildspec, parsed, as Terraform renders it with or without a wheel."""
+    text = _docker_buildspec_text()
+    directive = re.compile(r'%\{if var\.sdk_wheel_path != ""\}(.*?)%\{endif\}', re.S)
+    assert directive.search(text), "the wheel download is not conditional on a wheel"
+    rendered = directive.sub(lambda m: m.group(1) if wheel else "", text)
+    assert "%{" not in rendered
+    return yaml.safe_load(rendered)
+
+
+def test_blueprint_dockerfiles_install_the_runtime_from_the_package():
+    """No blueprint copies the runtime; each installs requirements.txt with a deploy's wheel."""
+    from socialagent.cli import runtime_cmd
+    from socialagent.cli.blueprints import _BLUEPRINT_NAMES
+
+    for blueprint in sorted(_BLUEPRINT_NAMES):
+        directory = REPO_ROOT / "blueprints" / blueprint
+        text = (directory / "Dockerfile").read_text()
+        assert not runtime_cmd.dockerfile_copies_runtime(directory), blueprint
+        # Exactly the lines `socialagent runtime update` writes into an older project.
+        assert runtime_cmd._NEW_INSTALL in text, blueprint
+        assert text.index("RUN pip install") < text.index("COPY agent.py")
+
+
+def test_docker_build_without_a_wheel_keeps_its_buildspec():
+    """A stack without a wheel renders the buildspec it had, so its CodeBuild project does not change."""
+    commands = _docker_buildspec(wheel=False)["phases"]["build"]["commands"]
+    assert commands == [
+        'echo "Building ARM64 Docker image..."',
+        "docker build --no-cache -f $DOCKERFILE -t $ECR_REPOSITORY_URL:$IMAGE_TAG .",
+    ]
+
+
+def test_docker_build_puts_the_wheel_in_the_context_before_building():
+    commands = _docker_buildspec(wheel=True)["phases"]["build"]["commands"]
+    fetch = commands[0]
+    assert fetch == (
+        'mkdir -p wheels && aws s3 cp "s3://$SDK_WHEEL_BUCKET/$SDK_WHEEL_KEY" wheels/'
+    )
+    assert commands[-1].startswith("docker build ")
+    tf = _code(CODEBUILD_TF.read_text())
+    environment = _block(
+        _block(tf, 'resource "aws_codebuild_project" "agent_image"'), "environment {"
+    )
+    assert (
+        'for_each = var.sdk_wheel_path == "" ? {} : { SDK_WHEEL_BUCKET = '
+        "local.agent_sdk_wheel_bucket, SDK_WHEEL_KEY = local.agent_sdk_wheel_object }"
+    ) in environment
+
+
+def test_zip_build_installs_the_wheel_and_never_merges_a_copy_over_the_package():
+    """pip installs the wheel with requirements.txt; a copied runtime stays out once one is installed.
+
+    rsync merges directories, so a project's socialagent_runtime/ copied over
+    the installed package would mix two releases module by module.
+    """
+    commands = _zip_buildspec()["phases"]["build"]["commands"]
+    prepare = next(
+        i
+        for i, c in enumerate(commands)
+        if "touch /tmp/sdk-wheel/requirements.txt" in c
+    )
+    fetch = next(i for i, c in enumerate(commands) if "$SDK_WHEEL_KEY" in c)
+    install = next(i for i, c in enumerate(commands) if "pip install" in c)
+    sync = next(i for i, c in enumerate(commands) if "rsync" in c)
+    assert prepare < fetch < install < sync
+    assert "-r requirements.txt -r /tmp/sdk-wheel/requirements.txt" in commands[install]
+    assert commands[fetch] == (
+        'if [ -n "$SDK_WHEEL_KEY" ]; then aws s3 cp "s3://$OUTPUT_BUCKET/$SDK_WHEEL_KEY" '
+        "/tmp/sdk-wheel/ && ls /tmp/sdk-wheel/*.whl > /tmp/sdk-wheel/requirements.txt; fi"
+    )
+    assert commands[sync].startswith(
+        'if [ -d /tmp/build/socialagent_runtime ]; then RUNTIME_COPY="--exclude=/socialagent_runtime"; '
+        'else RUNTIME_COPY=""; fi; rsync '
+    )
+    assert "$RUNTIME_COPY . /tmp/build/" in commands[sync]
+
+
+def test_agent_wheel_sits_where_the_agent_build_roles_already_read():
+    """The wheel is uploaded under the prefix each agent build role reads, so no IAM grant is added."""
+    tf = _code(CODEBUILD_TF.read_text())
+    assert _assigned(tf, "agent_sdk_wheel_bucket") == (
+        "local.is_docker ? local.effective_agent_source_bucket : local.effective_agent_code_bucket"
+    )
+    assert _assigned(tf, "agent_sdk_wheel_object").startswith(
+        '"${local.is_docker ? local.agent_source_key_prefix : local.agent_code_key_prefix}sdk-wheel-${local.sdk_wheel_md5}/'
+    )
+    docker_role = _block(tf, 'resource "aws_iam_role_policy" "codebuild"')
+    assert (
+        '"arn:aws:s3:::${local.effective_agent_source_bucket}${local.use_shared_artifacts ? "/${local.agent_source_key_prefix}*" : "/*"}"'
+        in docker_role
+    )
+    zip_role = _block(tf, 'resource "aws_iam_role_policy" "codebuild_zip"')
+    assert (
+        '"arn:aws:s3:::${local.effective_agent_code_bucket}${local.use_shared_artifacts ? "/${local.agent_code_key_prefix}*" : "/*"}"'
+        in zip_role
+    )
+    wheel = _block(tf, 'resource "aws_s3_object" "agent_sdk_wheel"')
+    assert _assigned(wheel, "bucket") == "local.agent_sdk_wheel_bucket"
+    assert _assigned(wheel, "key") == "local.agent_sdk_wheel_object"
+
+
+def test_a_wheel_rebuilds_the_image_and_the_zip_package():
+    """The image tag and the zip recipe take the wheel's MD5, and only when there is one."""
+    main = _code((INFRA / "modules" / "runtime" / "main.tf").read_text())
+    assert _assigned(main, "image_source_hash") == (
+        'local.is_docker ? (var.sdk_wheel_path == "" ? '
+        "data.archive_file.agent_source[0].output_base64sha256 : "
+        'base64sha256("${data.archive_file.agent_source[0].output_base64sha256} ${local.sdk_wheel_md5}")) : ""'
+    )
+    assert "substr(local.image_source_hash, 0, 12)" in _assigned(main, "image_tag")
+
+
+@pytest.mark.parametrize(
+    "requirements, dockerfile, pins, copies",
+    [
+        ("boto3\nsocialagent[runtime]==2026.10.0\n", "COPY agent.py .\n", True, False),
+        ("smart-socialagent[runtime] == 1.0\n", "", True, False),
+        ("socialagent==2026.10.0\n", "", False, False),
+        ("boto3\n", "COPY socialagent_runtime ./socialagent_runtime\n", False, True),
+        (
+            "x[runtime]==1\n",
+            "copy --chown=1000 socialagent_runtime/ /app/x/\n",
+            True,
+            True,
+        ),
+        (
+            "x[runtime]==1\n",
+            "# COPY socialagent_runtime ./socialagent_runtime\n",
+            True,
+            False,
+        ),
+        ("x[runtime]==1\n", "COPY\nsocialagent_runtime\n", True, False),
+    ],
+)
+def test_terraform_and_the_cli_agree_on_a_migrated_project(
+    tmp_path: Path, requirements: str, dockerfile: str, pins: bool, copies: bool
+):
+    """``pins_runtime_package`` and ``dockerfile_copies_runtime`` read a project as the CLI does.
+
+    Terraform keeps a copied runtime in the archive while either says the
+    project still needs it, and ``runtime status`` reports the same two facts.
+    """
+    from socialagent.cli import runtime_cmd
+
+    terraform = _terraform_or_skip()
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "requirements.txt").write_text(requirements)
+    (project / "Dockerfile").write_text(dockerfile)
+
+    tf = _code(CODEBUILD_TF.read_text())
+    blocks = [
+        "locals " + _balanced(tf, m.end() - 1)
+        for m in re.finditer(r"^locals\s*\{", tf, re.MULTILINE)
+    ]
+    block = next(b for b in blocks if "pins_runtime_package" in b)
+    keep = (
+        "agent_requirements_file",
+        "agent_dockerfile",
+        "pins_runtime_package",
+        "dockerfile_copies_runtime",
+    )
+    lines = [
+        line for line in block.splitlines()[1:-1] if line.strip().split(" ")[0] in keep
+    ]
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "main.tf").write_text(
+        'variable "agent_source_dir" { type = string }\n'
+        'variable "dockerfile_path" { type = string }\n'
+        "locals {\n  is_docker = true\n" + "\n".join(lines) + "\n}\n"
+    )
+    found = _console(
+        terraform,
+        root,
+        "[local.pins_runtime_package, local.dockerfile_copies_runtime]",
+        {"agent_source_dir": str(project), "dockerfile_path": "Dockerfile"},
+        tmp_path / "tf-data",
+    )
+    assert found == [pins, copies]
+    assert runtime_cmd.dockerfile_copies_runtime(project) is copies

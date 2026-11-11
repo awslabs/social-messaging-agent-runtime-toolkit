@@ -3,7 +3,8 @@
 
 """
 socialagent-runtime: lightweight agent-side helpers for memory, state, scheduling, and notifications.
-Vendored into agent projects by `socialagent init`. No Lambda handler code, no provider dependencies.
+Installed from the socialagent wheel as socialagent_runtime; projects pin it in requirements.txt.
+No Lambda handler code, no provider dependencies.
 """
 
 from __future__ import annotations
@@ -284,10 +285,11 @@ def _validate_payload(payload: dict) -> dict:
     if version != SOCIALAGENT_VERSION:
         msg = (
             f"socialagent-runtime version mismatch: payload version={version!r}, "
-            f"expected={SOCIALAGENT_VERSION}. This project's vendored socialagent_runtime/ is out of "
-            "sync with the SMART release it's running against — copy the current "
-            "packages/socialagent-runtime/ from the SMART repo over this project's socialagent_runtime/ "
-            "(there is no 'socialagent init --update')."
+            f"expected={SOCIALAGENT_VERSION}. The agent's socialagent_runtime comes from a "
+            "different SMART release than the stack's Lambda functions. Run `socialagent "
+            "runtime update` in the project, which pins the SDK in requirements.txt at the "
+            "CLI's version (and removes a copied socialagent_runtime/ if the project has "
+            "one), then deploy again."
         )
         raise ValueError(msg)
     # Require the keys the session/memory helpers index directly, so a malformed

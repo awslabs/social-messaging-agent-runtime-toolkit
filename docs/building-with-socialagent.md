@@ -45,13 +45,12 @@ seconds locally.
 | `src/skills/` — markdown skills | AgentCore Memory read/write, session management |
 | `handlers/*.py` — but only to add `@app.on_event`/`@app.on_schedule` blocks | Scheduling delivery (EventBridge), template sync/24h-window logic |
 | `templates.yaml` | The Lambda functions and their wiring |
-| `socialagent_runtime/` | **Vendored, not yours.** Physically copied into your project by `socialagent init` — treat it as read-only generated code. If you find yourself editing it, you're probably trying to do something `notify`/`state`/`scheduler`/`messages` already provides; check `docs/agent-integration.md`, `docs/state.md`, `docs/notifications.md` first. |
+| `socialagent_runtime` | **Installed, not yours.** It comes from the SDK package: `socialagent init` pins `socialagent[runtime]==<CLI version>` in `requirements.txt`, and `socialagent runtime update` moves the pin when you upgrade the CLI. If you find yourself wanting to change it, you're probably trying to do something `notify`/`state`/`scheduler`/`messages` already provides; check `docs/agent-integration.md`, `docs/state.md`, `docs/notifications.md` first. |
 
 Don't reimplement webhook parsing, don't hand-roll S3 media upload, don't build
 your own conversation history — the whole point of SMART is that this is done
-for you. If something in `socialagent_runtime/` seems to be missing a capability, that's
-a signal to raise it upstream in the SMART repo, not to patch your vendored copy
-(`socialagent runtime status` reports an edited copy as `unknown`, and `socialagent runtime update` refuses to replace it without `--force`, so your patch is protected but never shipped upstream.
+for you. If something in `socialagent_runtime` seems to be missing a capability, that's
+a signal to raise it upstream in the SMART repo. A project an older CLI scaffolded carries its own copy in `socialagent_runtime/`; `socialagent runtime update` replaces it with the package (keeping a backup), and refuses a copy you edited unless you pass `--force`, so a local patch is never discarded silently, and never shipped upstream either.
 
 ---
 
