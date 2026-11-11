@@ -73,6 +73,9 @@ def checkout(tmp_path, monkeypatch):
     (tf / "variables.tf").write_text(
         (REPO_ROOT / "infra-terraform" / "variables.tf").read_text()
     )
+    # What makes it a SMART checkout rather than any infra-terraform/ (_infra._is_checkout).
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "smart-socialagent"\n')
+    (tmp_path / "src" / "socialagent").mkdir(parents=True)
     project = tmp_path / "projects" / "my-bot"
     (project / "handlers").mkdir(parents=True)
     (project / "socialagent.dev.yaml").write_text(

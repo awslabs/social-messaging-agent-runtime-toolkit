@@ -416,10 +416,17 @@ def test_save_load_and_schema_version_are_utf8_under_a_non_utf8_locale(tmp_path)
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 
+def _repo_markers(root):
+    """What makes *root* a SMART checkout besides its infra-terraform/main.tf."""
+    (root / "pyproject.toml").write_text('[project]\nname = "smart-socialagent"\n')
+    (root / "src" / "socialagent").mkdir(parents=True)
+
+
 def test_find_tf_dir_walks_up_to_repo_root(tmp_path):
     tf_dir = tmp_path / "infra-terraform"
     tf_dir.mkdir()
     (tf_dir / "main.tf").write_text("# fixture\n")
+    _repo_markers(tmp_path)
     nested = tmp_path / "projects" / "mybot"
     nested.mkdir(parents=True)
 
@@ -430,6 +437,7 @@ def test_find_tf_dir_requires_main_tf(tmp_path, monkeypatch):
     """A directory named infra-terraform without main.tf is not a match."""
     monkeypatch.setattr(_infra, "terraform_dir", lambda: tmp_path / "no-such-dir")
     (tmp_path / "infra-terraform").mkdir()
+    _repo_markers(tmp_path)
     with pytest.raises(CliError, match="could not find infra-terraform"):
         _infra.find_tf_dir(tmp_path)
 

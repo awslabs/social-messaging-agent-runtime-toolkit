@@ -237,7 +237,7 @@ run "template_sync_checkout_bundles_the_sdk_source" {
   }
 
   assert {
-    condition     = alltrue([for f in ["templates.yaml", "pyproject.toml", "VERSION", "src/socialagent/__init__.py", "blueprints/minimal/agent.py"] : contains([for s in data.archive_file.template_source.source : s.filename], f)]) && !contains([for s in data.archive_file.template_source.source : s.filename], "sdk-install.txt")
+    condition     = alltrue([for f in ["templates.yaml", "pyproject.toml", "VERSION", "PYPI.md", "src/socialagent/__init__.py", "blueprints/minimal/agent.py"] : contains([for s in data.archive_file.template_source.source : s.filename], f)]) && !contains([for s in data.archive_file.template_source.source : s.filename], "sdk-install.txt")
     error_message = "In a checkout the template-sync bundle carries the SDK source `pip install .` reads."
   }
 

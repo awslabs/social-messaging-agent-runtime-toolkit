@@ -29,15 +29,19 @@ def _version() -> str:
 
     The installed distribution's version first; from a checkout that was never
     installed, the repo's ``VERSION`` file, which is what that distribution version
-    was built from.
+    was built from. The distribution is ``smart-socialagent`` on PyPI, where
+    ``socialagent`` collides with an existing project (ADR-0008); an environment
+    installed from a checkout before the rename still carries ``socialagent``.
     """
-    try:
-        return metadata.version("socialagent")
-    except metadata.PackageNotFoundError:
-        version_file = Path(__file__).resolve().parents[3] / "VERSION"
-        if version_file.is_file():
-            return version_file.read_text().strip()
-        return "unknown"
+    for distribution in ("smart-socialagent", "socialagent"):
+        try:
+            return metadata.version(distribution)
+        except metadata.PackageNotFoundError:
+            continue
+    version_file = Path(__file__).resolve().parents[3] / "VERSION"
+    if version_file.is_file():
+        return version_file.read_text().strip()
+    return "unknown"
 
 
 def main() -> None:

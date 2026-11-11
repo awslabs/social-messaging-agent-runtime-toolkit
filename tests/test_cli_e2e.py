@@ -178,7 +178,7 @@ def test_version_flag(ws, env):
 
     r = run("--version", cwd=ws, env=env)
     assert r.returncode == 0
-    assert r.stdout.strip() == f"socialagent {version('socialagent')}"
+    assert r.stdout.strip() == f"socialagent {version('smart-socialagent')}"
 
 
 # --------------------------------------------------------------------------- #
