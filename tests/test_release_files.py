@@ -81,7 +81,8 @@ def test_readme_badge_matches():
 
 
 def test_codeowners_routes_every_path_to_the_maintainers():
-    """Every rule names the four maintainers' GitHub logins and nothing else.
+    """The catch-all rule names the four maintainers' GitHub logins; every other
+    rule names an owner and a backup from among them, and nothing else.
 
     GitHub skips an owner it cannot resolve, such as a placeholder handle, so a
     rule without them routes its reviews to no one. They are the maintainers in
@@ -94,15 +95,28 @@ def test_codeowners_routes_every_path_to_the_maintainers():
         for line in owners.splitlines()
         if line.strip() and not line.startswith("#")
     ]
-    assert "*" in [path for path, *_ in rules], "CODEOWNERS needs a catch-all line"
+    paths = [path for path, *_ in rules]
+    # GitHub uses the last matching line, so a catch-all anywhere but first would
+    # override every area rule above it.
+    assert paths[:1] == ["*"], "CODEOWNERS needs the catch-all as its first line"
+    assert paths.count("*") == 1, paths
     # The handles are not repeated here, so a typo made on every rule would pass a
     # self-comparison; the digest of the catch-all rule's owners is the anchor.
     assert (
         MAINTAINERS_DIGEST
         == "3da7aa58d6192b2414a2b0684f51e89c16a00cc2d90fa851ed25e36c216d0efa"  # pragma: allowlist secret
     ), MAINTAINERS
-    for path, *handles in rules:
-        assert handles == MAINTAINERS, f"{path} is owned by {handles}"
+    for path, *handles in rules[1:]:
+        assert len(handles) == 2 and len(set(handles)) == 2, (
+            f"{path} needs an owner and a backup, has {handles}"
+        )
+        assert set(handles) <= set(MAINTAINERS), f"{path} is owned by {handles}"
+    # A broader directory listed after a narrower one would win for its files.
+    for i, earlier in enumerate(paths[1:], start=1):
+        for later in paths[i + 1 :]:
+            assert not (earlier != later and earlier.startswith(later)), (
+                f"{later} comes after {earlier} and shadows it"
+            )
     names = (
         "Artemio Padilla",
         "Emmanuel Hernandez",

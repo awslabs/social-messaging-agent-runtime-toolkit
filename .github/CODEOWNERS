@@ -1,26 +1,36 @@
 # Review routing. GitHub requests a review from the owners of every path a pull
-# request touches; the branch protection on main requires one of them to approve.
-# Owners are the four maintainers in CONTRIBUTORS.md, by GitHub login, so keep the
-# two in step. GitHub ignores an owner without write access to the repository,
-# so each login needs it.
+# request touches, and for each file it uses the LAST line that matches, so lines
+# run from general to specific. Owners are the four maintainers in CONTRIBUTORS.md,
+# by GitHub login, so keep the two in step. GitHub ignores an owner without write
+# access to the repository, so each login needs it.
+#
+# Each area below has an owner (first login) and a backup (second login). The
+# branch protection on main requires, for every file changed, an approval from one
+# of that file's owners. The intended setup is two approvals, at least one of them
+# from an owner of the area; the second approval becomes required once the branch
+# protection setting is changed, separately from this file.
 
-# Everything, unless a line below is more specific
+# Everything else: docs, ADRs, tests, scripts
 *                                   @emolvera @digalaviz @art-aws @mfls-aws
 
-# The two runtime layers and the contract between them
-/src/socialagent/                   @emolvera @digalaviz @art-aws @mfls-aws
-/packages/socialagent-runtime/      @emolvera @digalaviz @art-aws @mfls-aws
+# Agent and runtime
+/packages/socialagent-runtime/      @mfls-aws @art-aws
+/blueprints/                        @mfls-aws @art-aws
+/recipes/                           @mfls-aws @art-aws
 
-# Infrastructure: IAM, networking, data stores
-/infra-terraform/                   @emolvera @digalaviz @art-aws @mfls-aws
+# Admin console
+/socialagent-admin-console/         @art-aws @emolvera
 
-# The admin console has its own stability bar
-/socialagent-admin-console/         @emolvera @digalaviz @art-aws @mfls-aws
+# Infrastructure as code
+/infra-terraform/                   @art-aws @digalaviz
 
-# CI and release machinery
-/.github/                           @emolvera @digalaviz @art-aws @mfls-aws
+# CLI and Lambda control layer
+/src/socialagent/                   @digalaviz @emolvera
 
-# Security-sensitive documents need a maintainer who reviewed the threat model
-/docs/threat-model.md               @emolvera @digalaviz @art-aws @mfls-aws
-/docs/data-flows.md                 @emolvera @digalaviz @art-aws @mfls-aws
-/SECURITY.md                        @emolvera @digalaviz @art-aws @mfls-aws
+# Security: CI and release machinery, the security policy, the threat model, data
+# flows and IAM. Last, so these lines win over the areas above.
+/.github/                           @emolvera @digalaviz
+/SECURITY.md                        @emolvera @digalaviz
+/docs/threat-model.md               @emolvera @digalaviz
+/docs/data-flows.md                 @emolvera @digalaviz
+/infra-terraform/modules/iam/       @emolvera @digalaviz

@@ -46,7 +46,7 @@ Pull requests from outside contributors are reviewed by the project maintainers,
 
 Issues and pull requests are triaged within five business days: labelled, and either answered, assigned, or closed with the reason. Beyond that, response time is best effort. A pull request that passes the checks and has an approving review from a code owner is merged by a maintainer; one that goes a month without a response from its author after a review is closed, and can be reopened. There is no stale bot; a maintainer closes it and says why.
 
-Reviews route automatically: `.github/CODEOWNERS` names the four maintainers, by GitHub login, for every part of the tree, and the branch protection on `main` requires one of them to approve.
+Reviews route automatically by area: `.github/CODEOWNERS` gives each part of the tree an owner and a backup among the four maintainers, by GitHub login (agent and runtime, admin console, infrastructure as code, CLI and Lambda control layer, and security, which covers `.github/`, `SECURITY.md`, the threat model, the data flows and the IAM module), and names all four for everything else, such as docs, ADRs, tests and scripts. The branch protection on `main` requires, for every file a pull request changes, an approval from one of that file's code owners. The intended setup is two approvals, at least one of them from an owner of the area; the second approval becomes required once the branch protection setting is changed.
 
 ## Contributions written with AI assistance
 
