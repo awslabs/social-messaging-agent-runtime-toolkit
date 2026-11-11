@@ -18,6 +18,7 @@ that cannot start is the same bug one step later.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import re
 import shutil
@@ -64,24 +65,24 @@ def built_wheel(tmp_path_factory) -> Path:
 
 
 def _build_wheel(source: Path, out_dir: Path) -> Path:
-    """Build a wheel from *source* into *out_dir*; skip if no builder is available."""
-    result = subprocess.run(
-        [sys.executable, "-m", "build", "--wheel", "--outdir", str(out_dir)],
-        cwd=source,
-        capture_output=True,
-        text=True,
+    """Build a wheel from *source* into *out_dir*; skip only if no builder is installed.
+
+    A build that runs and fails is a failure, not a skip: a build input an
+    archive leaves out (a readme, a force-included tree) fails exactly here, and
+    a skip would keep CI green over it.
+    """
+    if importlib.util.find_spec("build") is not None:
+        command = [sys.executable, "-m", "build", "--wheel", "--outdir", str(out_dir)]
+    elif shutil.which("uv"):
+        # `build` is not a declared dev dependency; uv is what the Makefile and
+        # CI use.
+        command = ["uv", "build", "--wheel", "--out-dir", str(out_dir)]
+    else:
+        pytest.skip("no wheel builder installed (neither `build` nor `uv`)")
+    result = subprocess.run(command, cwd=source, capture_output=True, text=True)
+    assert result.returncode == 0, (
+        f"`{' '.join(command[:3])}` failed in {source}:\n{result.stderr[-3000:]}"
     )
-    if result.returncode != 0:
-        # `build` is not a declared dev dependency; fall back to uv, which is
-        # what the Makefile and CI use.
-        result = subprocess.run(
-            ["uv", "build", "--wheel", "--out-dir", str(out_dir)],
-            cwd=source,
-            capture_output=True,
-            text=True,
-        )
-    if result.returncode != 0:
-        pytest.skip(f"could not build wheel: {result.stderr[-400:]}")
 
     wheels = list(out_dir.glob("*.whl"))
     assert len(wheels) == 1, f"expected exactly one wheel, got {wheels}"
@@ -236,6 +237,13 @@ def test_template_sync_archive_filters_match_the_layer():
     )
 
 
+def _hcl_list(text: str, name: str) -> list[str]:
+    """Return the string literals of the HCL list assigned to ``name`` in *text*."""
+    match = re.search(rf"^\s*{name}\s*=\s*\[(.*?)\]", text, re.M | re.S)
+    assert match, f"no `{name} = [...]`"
+    return re.findall(r'"([^"]+)"', match.group(1))
+
+
 def test_layer_archive_carries_everything_the_build_reads():
     """The layer CodeBuild source must carry every path ``pip install .`` reads.
 
@@ -264,13 +272,8 @@ def test_layer_archive_carries_everything_the_build_reads():
     ]
 
     packaging_tf = (REPO_ROOT / "infra-terraform" / "packaging.tf").read_text()
-
-    def tf_list(name: str) -> list[str]:
-        match = re.search(rf"^\s*{name}\s*=\s*\[(.*?)\]", packaging_tf, re.M | re.S)
-        assert match, f"{name} is gone from infra-terraform/packaging.tf"
-        return re.findall(r'"([^"]+)"', match.group(1))
-
-    root_files, trees = tf_list("layer_root_files"), tf_list("layer_trees")
+    root_files = _hcl_list(packaging_tf, "layer_root_files")
+    trees = _hcl_list(packaging_tf, "layer_trees")
     missing = [
         path
         for path in read_by_build
@@ -379,22 +382,33 @@ def test_dev_prefers_the_projects_copy_over_the_installed_runtime(tmp_path: Path
 
 
 def test_runtime_extra_matches_the_blueprints():
-    """``socialagent[runtime]`` asks for what a scaffolded project installs.
+    """``smart-socialagent[runtime]`` asks for what a scaffolded project installs.
 
     Two specs for one dependency drift apart, and then the installed runtime
-    and the container's disagree about which bedrock-agentcore they run on.
+    and the container's disagree about which bedrock-agentcore or Strands they
+    run on. Strands is compared on its own line because bedrock-agentcore's
+    ``strands-agents`` extra sets only a lower bound.
     """
+    pinned = {"bedrock-agentcore", "strands-agents"}
+
+    def pins(lines: list[str]) -> dict[str, str]:
+        found = {}
+        for line in lines:
+            line = line.strip()
+            name = re.match(r"[A-Za-z0-9._-]*", line).group(0)
+            if name in pinned:
+                assert name not in found, f"{name} is pinned twice: {line}"
+                found[name] = line
+        return found
+
     with (REPO_ROOT / "pyproject.toml").open("rb") as fh:
-        extra = tomllib.load(fh)["project"]["optional-dependencies"]["runtime"]
+        extra = pins(tomllib.load(fh)["project"]["optional-dependencies"]["runtime"])
+    assert set(extra) == pinned, f"the runtime extra in pyproject.toml pins {extra}"
     for blueprint in sorted(_BLUEPRINT_NAMES):
         lines = (REPO_ROOT / "blueprints" / blueprint / "requirements.txt").read_text()
-        agentcore = [
-            line.strip()
-            for line in lines.splitlines()
-            if line.strip().startswith("bedrock-agentcore")
-        ]
-        assert agentcore == extra, (
-            f"blueprints/{blueprint}/requirements.txt pins {agentcore}, "
+        required = pins(lines.splitlines())
+        assert required == extra, (
+            f"blueprints/{blueprint}/requirements.txt pins {required}, "
             f"the runtime extra in pyproject.toml {extra}"
         )
 
@@ -412,10 +426,44 @@ def test_layer_build_leaves_the_runtime_out():
     assert install < strip < zip_up
 
 
-def _hcl_list(text: str, name: str) -> list[str]:
-    match = re.search(rf"^\s*{name}\s*=\s*\[(.*?)\]", text, re.M | re.S)
-    assert match, f"no `{name} = [...]`"
-    return re.findall(r'"([^"]+)"', match.group(1))
+# The template-sync archive's single-file entries name their source through one
+# of these variables; anything else is a new kind of entry this test must learn.
+_TEMPLATE_SOURCE_FILE = re.compile(
+    r'^file\((?:var\.socialagent_pyproject_path|"\$\{dirname\(var\.socialagent_pyproject_path\)\}/([^"]+)"|(var\.templates_path))\)$'
+)
+
+
+def _template_sync_root_files() -> dict[str, Path]:
+    """The template-sync archive's single-file entries: archive name -> file it copies.
+
+    Read from the static ``source { content = file(...), filename = "..." }``
+    blocks in ``modules/templates/main.tf``, so a file the archive gains or
+    loses changes the tree the test builds. ``templates.yaml`` is the project's
+    own; a blueprint's stands in for it.
+    """
+    text = (
+        REPO_ROOT / "infra-terraform" / "modules" / "templates" / "main.tf"
+    ).read_text()
+    entries = re.findall(
+        r'^\s*source\s*\{\s*content\s*=\s*(.+?)\s*\n\s*filename\s*=\s*"([^"]+)"\s*\}',
+        text,
+        re.M,
+    )
+    assert entries, (
+        "no single-file `source { ... }` blocks in modules/templates/main.tf"
+    )
+    files = {}
+    for content, filename in entries:
+        match = _TEMPLATE_SOURCE_FILE.match(content)
+        assert match, f"unrecognised template-sync source for {filename}: {content}"
+        repo_file, templates = match.groups()
+        if templates:
+            files[filename] = (
+                REPO_ROOT / "blueprints" / "personal-assistant" / "templates.yaml"
+            )
+        else:
+            files[filename] = REPO_ROOT / (repo_file or "pyproject.toml")
+    return files
 
 
 @pytest.mark.slow
@@ -432,10 +480,13 @@ def test_archives_build_the_runtime_package(tmp_path: Path, archive: str):
     infra = REPO_ROOT / "infra-terraform"
     if archive == "layer":
         packaging_tf = (infra / "packaging.tf").read_text()
-        files = _hcl_list(packaging_tf, "layer_root_files")
+        files = {
+            name: REPO_ROOT / name
+            for name in _hcl_list(packaging_tf, "layer_root_files")
+        }
         trees = _hcl_list(packaging_tf, "layer_trees")
     else:
-        files = ["pyproject.toml", "VERSION"]
+        files = _template_sync_root_files()
         block = re.search(
             r"force_included_dirs\s*=\s*\{(.*?)\n  \}",
             (infra / "main.tf").read_text(),
@@ -446,8 +497,8 @@ def test_archives_build_the_runtime_package(tmp_path: Path, archive: str):
             rel = f.relative_to(REPO_ROOT)
             (src / rel).parent.mkdir(parents=True, exist_ok=True)
             (src / rel).write_bytes(f.read_bytes())
-    for name in files:
-        (src / name).write_bytes((REPO_ROOT / name).read_bytes())
+    for name, source in files.items():
+        (src / name).write_bytes(source.read_bytes())
     for tree in trees:
         if not (src / tree).exists():
             shutil.copytree(
@@ -463,7 +514,7 @@ def test_archives_build_the_runtime_package(tmp_path: Path, archive: str):
 
 @pytest.mark.slow
 def test_pip_installed_runtime_imports(built_wheel: Path, tmp_path: Path):
-    """``pip install socialagent[runtime]`` gives an importable ``socialagent_runtime``.
+    """``pip install smart-socialagent[runtime]`` gives an importable ``socialagent_runtime``.
 
     From a venv and a working directory outside the repo, so nothing resolves
     to the checkout. Its payload contract version must be the Lambda side's:
