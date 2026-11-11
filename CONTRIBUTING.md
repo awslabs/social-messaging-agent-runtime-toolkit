@@ -94,6 +94,8 @@ The Security workflow ([.github/workflows/security.yml](.github/workflows/securi
 
 The workflows pin every action to a full commit SHA with its release tag in a trailing comment (`uses: actions/checkout@<sha> # v4.4.0`), because a tag can be moved. A new step must use the same form; Dependabot updates the SHA and the comment together, and waits until a release is 7 days old before proposing it.
 
+A Dependabot pull request that raises a Python or npm dependency by a patch or minor version gets auto-merge armed by `.github/workflows/dependabot-auto-merge.yml`. Auto-merge merges it once every required check passes and a code owner has approved, so a maintainer still decides; the workflow only saves the second visit. Majors, GitHub Actions and Terraform provider updates are left manual: a major's breaking changes are not something CI describes, and a new action version runs with the repository's permissions as soon as it is merged. It needs "Allow auto-merge" turned on in the repository settings.
+
 Three things first-time contributors have asked about:
 
 - `make check` takes about 90 seconds; `make test-packaging` builds a wheel and boots each blueprint on port 8080, and skips those boot tests with a message when the port is busy.
