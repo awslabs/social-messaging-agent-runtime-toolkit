@@ -83,7 +83,7 @@ dev = [
     # assert against our own model of DynamoDB, which is worthless for bugs that
     # live in the conditional expressions themselves. The console backend already
     # depends on moto; only the dynamodb extra is needed here, not moto[all].
-    "moto[dynamodb]>=5.0",
+    "moto[dynamodb]>=5.2.5",
     # The e2e tests run `socialagent dev`, which imports a scaffolded agent.py
     # in this interpreter. Same spec as the blueprints' requirements.txt.
     "bedrock-agentcore[strands-agents]>=1.18.1",
