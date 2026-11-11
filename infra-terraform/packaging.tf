@@ -240,6 +240,10 @@ resource "aws_codebuild_project" "layer_build" {
             - echo "Building Lambda layer on Linux..."
             - mkdir -p /tmp/layer/python
             - pip install . -t /tmp/layer/python --quiet --upgrade --no-cache-dir
+            # The wheel also installs the agent runtime, which runs only in the
+            # AgentCore container. Kept out of the layer so a Lambda import of it
+            # fails, as the two-layer rule in AGENTS.md expects.
+            - rm -rf /tmp/layer/python/socialagent_runtime
             - |
               if [ "$HAS_TEMPLATES" = "true" ]; then
                 KEY_PREFIX=""; if [ -n "$OUTPUT_PREFIX" ]; then KEY_PREFIX="$OUTPUT_PREFIX/"; fi; aws s3 cp "s3://$OUTPUT_BUCKET/$${KEY_PREFIX}templates.yaml" /tmp/layer/python/templates.yaml
