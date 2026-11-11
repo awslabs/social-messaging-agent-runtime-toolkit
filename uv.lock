@@ -1292,7 +1292,7 @@ wheels = [
 ]
 
 [[package]]
-name = "socialagent"
+name = "smart-socialagent"
 source = { editable = "." }
 dependencies = [
     { name = "boto3" },

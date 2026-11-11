@@ -15,6 +15,10 @@ All notable changes to SMART, the Social Messaging Agent Runtime Toolkit, are re
 - The conversation viewer's "Delete conversation" asks for confirmation inside the viewer, naming the conversation and warning that the deletion cannot be undone, before it deletes the conversation's AgentCore Memory events; one click no longer deletes.
 - The Stack Detail Deploys tab reports a failed CodeBuild read instead of showing an empty history, reads each stack's builds in the stack's own region, and reads a zip stack's builds from `<prefix>-agent-zip-build`.
 
+### Developer experience
+- Published on PyPI as `smart-socialagent` ([ADR-0008](docs/adr/0008-pypi-distribution-name.md)): `socialagent` collides with an existing project there. The command and the import package stay `socialagent`, and `deploy` still needs a clone of the repository for `infra-terraform/`. The package page (`PYPI.md`) opens with the beta and "AS IS" notice.
+- A Release workflow publishes to PyPI from a GitHub Release, through trusted publishing and a `pypi` environment with required reviewers; `CONTRIBUTING.md` has the steps.
+
 ## [2026.10.0] - 2026-11-05
 
 The first public release. Everything below was in the toolkit when it was published.

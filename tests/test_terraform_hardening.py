@@ -3046,6 +3046,39 @@ def test_build_archives_ship_the_version_file():
     ), f"the template-sync source archive does not ship {version_path}"
 
 
+def test_build_archives_ship_the_readme():
+    """pyproject.toml names a readme file, and hatchling fails without it.
+
+    Both Terraform-built archives run `pip install .`, and both name their root
+    files by hand, so a readme that is not listed fails the layer build or the
+    template sync, and with it the deploy.
+    """
+    import tomllib
+
+    pyproject = tomllib.loads((INFRA.parent / "pyproject.toml").read_text())
+    readme = pyproject["project"].get("readme")
+    if isinstance(readme, dict):
+        readme = readme.get("file")
+    if not readme:
+        return
+    assert (INFRA.parent / readme).is_file(), f"{readme} is missing"
+
+    packaging = (INFRA / "packaging.tf").read_text()
+    root_files = re.search(r"layer_root_files\s*=\s*\[([^\]]*)\]", packaging)
+    assert root_files, "layer_root_files is gone from infra-terraform/packaging.tf"
+    assert f'"{readme}"' in root_files.group(1), (
+        f"the Lambda layer source archive does not ship {readme}"
+    )
+
+    templates = _block(
+        _code((INFRA / "modules" / "templates" / "main.tf").read_text()),
+        'data "archive_file" "template_source"',
+    )
+    assert re.search(rf'^\s*filename\s*=\s*"{re.escape(readme)}"', templates, re.M), (
+        f"the template-sync source archive does not ship {readme}"
+    )
+
+
 # =============================================================================
 # The zip-mode agent build fails on a failed install and builds for the runtime
 # =============================================================================

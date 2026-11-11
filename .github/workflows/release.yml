@@ -1,0 +1,116 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Release
+
+# Publishes smart-socialagent to PyPI when a GitHub Release is published from a
+# v<VERSION> tag. PyPI trusts this workflow through trusted publishing (OIDC),
+# so no token is stored anywhere: the PyPI project names this repository, this
+# file and the `pypi` environment, and only a run that matches all three can
+# upload. The environment's required reviewers approve each upload.
+on:
+  release:
+    types: [published]
+
+# Nothing by default; each job asks for what it needs.
+permissions: {}
+
+# Two runs for one tag would race to upload the same files; let the first finish.
+concurrency:
+  group: release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  # Checks the tagged tree, apart from the build: the packaging tests pip-install
+  # each blueprint's requirements from PyPI and boot the agents, and none of that
+  # may run in the workspace whose dist/ is uploaded with an attestation.
+  check:
+    name: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      # No cache: a release run must not restore anything a pull request run
+      # could have written.
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          enable-cache: false
+      # VERSION is the one place the release number lives, so the tag must name
+      # it: a v2026.11.0 release built from a tree that says 2026.10.0 would
+      # upload the wrong version under the right tag. VERSION has no pre-release
+      # form, so a GitHub pre-release would reach PyPI as a final release, and a
+      # tag off main would publish a tree nobody merged.
+      - name: Tag matches VERSION, is on main, and is not a pre-release
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          version="$(cat VERSION)"
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::release tag $TAG does not match VERSION ($version); expected v$version"
+            exit 1
+          fi
+          if [ "$PRERELEASE" = "true" ]; then
+            echo "::error::$TAG is a GitHub pre-release; VERSION has no pre-release form, so PyPI would get a final release"
+            exit 1
+          fi
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
+            echo "::error::release tag $TAG points at $GITHUB_SHA, which is not on main"
+            exit 1
+          fi
+      # The wheel must work from a pip install, not just a checkout: the same
+      # check `make test-packaging` runs, against the tagged tree.
+      - name: Packaging tests
+        run: |
+          uv sync --frozen
+          uv run --frozen pytest tests/test_cli_packaging.py
+      - name: Check the distributions
+        run: |
+          uv build --out-dir /tmp/check-dist
+          uvx twine==7.0.0 check --strict /tmp/check-dist/*
+
+  # Checkout, build and upload, nothing else, so the attested files come from
+  # the tagged tree alone.
+  build:
+    name: build
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          enable-cache: false
+      - name: Build
+        run: uv build
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/smart-socialagent/
+    permissions:
+      id-token: write # the OIDC token PyPI exchanges for a short-lived upload credential
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
