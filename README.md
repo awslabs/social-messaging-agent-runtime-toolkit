@@ -254,6 +254,8 @@ SMART is **not** a no-code bot builder and **not** a managed messaging vendor. I
 
 ## Guides
 
+The guides are also published as a searchable site at <https://awslabs.github.io/social-messaging-agent-runtime-toolkit/>, built from `docs/` (see [`site/`](site/)).
+
 - [Architecture](docs/architecture.md) — the two-layer model, message flow, and notify paths
 - [Getting Started](docs/getting-started.md) — scaffold, configure, deploy
 - [Building with SMART](docs/building-with-socialagent.md) — the standalone guide for building a project on SMART, also shipped into every scaffolded project as `SOCIALAGENT_GUIDE.md`

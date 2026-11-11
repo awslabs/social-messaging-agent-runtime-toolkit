@@ -128,7 +128,7 @@ From `init` to a running bot, and keeping it running.
 | Story | Release | Status | Gate | Issue | Tasks |
 |---|---|---|---|---|---|
 | `docs/` complete for the shipped surface | 2026.10 | 🔧 |  |  | WABA and shared-bucket gaps above; the README names the deployment telemetry up front and says the project is written to be read by AI agents |
-| **Documentation site** on GitHub Pages | 2026.11 | ⬜ | 4.2 CI hardening |  | MkDocs Material over `docs/`; README, blog and `pyproject.toml` point there; versioned once there is a second release |
+| **Documentation site** on GitHub Pages | 2026.11 | ⬜ | 4.2 CI hardening |  | Astro Starlight in `site/`, generated from `docs/` ([#91](https://github.com/awslabs/social-messaging-agent-runtime-toolkit/issues/91)); README, blog and `pyproject.toml` point there; versioned once there is a second release |
 | Blog post on the AWS ML blog | 2026.10 | 🔧 |  |  | Commands rewritten to the CLI path; clone pinned to the release tag |
 
 ## 4. Operations
