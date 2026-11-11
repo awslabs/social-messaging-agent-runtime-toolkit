@@ -351,12 +351,6 @@ def _tracked_terraform() -> list[str]:
     )
 
 
-def _hcl_list(text: str, name: str) -> list[str]:
-    match = re.search(rf"^\s*{name}\s*=\s*\[(.*?)\]", text, re.M | re.S)
-    assert match, f"no `{name} = [...]`"
-    return re.findall(r'"([^"]+)"', match.group(1))
-
-
 def _layer_archive() -> tuple[list[str], list[str]]:
     """The repo-root files and trees ``packaging.tf`` zips for the layer build."""
     packaging_tf = (REPO_ROOT / "infra-terraform" / "packaging.tf").read_text()
@@ -626,8 +620,8 @@ def test_archives_build_the_sdk(tmp_path: Path, archive: str):
             rel = f.relative_to(REPO_ROOT)
             (src / rel).parent.mkdir(parents=True, exist_ok=True)
             (src / rel).write_bytes(f.read_bytes())
-    for name, source in files.items():
-        (src / name).write_bytes(source.read_bytes())
+    for name in files:
+        (src / name).write_bytes((REPO_ROOT / name).read_bytes())
     for tree in trees:
         if not (src / tree).exists():
             shutil.copytree(
