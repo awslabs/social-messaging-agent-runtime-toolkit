@@ -5,23 +5,36 @@
 # Lambda Packaging: SDK Layer + Per-Handler Zips
 # =============================================================================
 # Builds a shared Lambda layer containing:
-#   - socialagent SDK (installed via pip from the repo root)
-#   - pip dependencies (bedrock-agentcore, pyyaml, cryptography, boto3)
+#   - socialagent SDK (installed via pip, see the two modes below)
+#   - pip dependencies (boto3, cryptography, pyyaml, rich)
 #   - templates.yaml (at /opt/python/templates.yaml)
 #
 # Each handler is packaged as a tiny zip containing only the handler file.
 # The layer provides all imports; handlers just need `from socialagent import ...`.
 #
-# DEPLOYMENT MODEL: This assumes the fork model — infra-terraform/ is
-# inside the SMART repo alongside src/socialagent/ and pyproject.toml. Users fork
-# the repo and customize. The layer is built by pip-installing the SDK from
-# the repo root (path.root/..), which resolves all dependencies correctly.
+# Where the SDK comes from depends on what sits above this root:
+#   - Checkout mode: infra-terraform/ is inside the SMART repo, beside
+#     pyproject.toml and src/socialagent/. The SDK source is zipped and
+#     CodeBuild runs `pip install .` on it, so a contributor's uncommitted
+#     change reaches the layer.
+#   - Package mode: no checkout above the root, as in the copy a
+#     pip-installed CLI writes to <project>/.socialagent/infra/<version>/, or
+#     a checkout with sdk_package_spec or sdk_wheel_path set. CodeBuild
+#     installs the published package (var.sdk_package_spec) from the package
+#     index, or a wheel the deployer supplies (var.sdk_wheel_path), and
+#     nothing is read from the root's parent directory.
 # =============================================================================
 
 locals {
-  # Resolve paths relative to the Terraform root
-  # In the fork model: infra-terraform/ is at repo_root/infra-terraform/
-  # So path.root/.. is the repo root containing pyproject.toml and src/socialagent/
+  # A checkout keeps pyproject.toml next to infra-terraform/; nothing else
+  # that runs this root has one there. Setting sdk_package_spec or
+  # sdk_wheel_path selects package mode even in a checkout, so a contributor
+  # can deploy a published or built package, and the mocked plan tests in
+  # tftest/ can plan package mode from the repo. Every file() and fileset() on
+  # the repo tree below is behind this test, so a package-mode plan never
+  # reads a path that does not exist.
+  sdk_from_checkout = fileexists("${path.root}/../pyproject.toml") && var.sdk_package_spec == "" && var.sdk_wheel_path == ""
+
   repo_root           = "${path.root}/.."
   socialagent_sdk_dir = "${local.repo_root}/src/socialagent"
   handlers_dir        = var.handlers_dir
@@ -38,7 +51,7 @@ locals {
   layer_trees      = ["src/socialagent", "packages/socialagent-runtime", "blueprints", "recipes"]
 
   layer_tree_files = flatten([
-    for tree in local.layer_trees : [
+    for tree in(local.sdk_from_checkout ? local.layer_trees : []) : [
       for f in fileset("${local.repo_root}/${tree}", "**") : "${tree}/${f}"
     ]
   ])
@@ -53,12 +66,70 @@ locals {
   # directory), key, log, tfvars or tfstate file would be zipped, uploaded and
   # stored in plaintext in the state. An *.example template stays.
   layer_files = [
-    for f in concat(local.layer_root_files, local.layer_tree_files) : f
+    for f in concat(local.sdk_from_checkout ? local.layer_root_files : [], local.layer_tree_files) : f
     if length(regexall("(^|/)(__pycache__|\\.pytest_cache|\\.ruff_cache|\\.mypy_cache|\\.venv|venv|node_modules|\\.socialagent|\\.terraform)(/|$)", f)) == 0
     && length(regexall("\\.(pyc|pyo|zip|pdf|swp|swo|pem|key|log|tfstate|tfstate\\.backup|tfvars)$", f)) == 0
     && length(regexall("(^|/)\\.DS_Store$", f)) == 0
     && (length(regexall("(^|/)\\.env(\\.[^/]*)?(/|$)", f)) == 0 || endswith(f, ".example"))
   ]
+
+  # Package mode. A wheel, when given, is what CodeBuild installs; it is
+  # uploaded under a key carrying its MD5, so a rebuilt wheel is a new object
+  # and the build never installs a stale one. The key sits under the prefix
+  # the layer build role can already read (aws_iam_role_policy.layer_build).
+  sdk_wheel_name         = var.sdk_wheel_path == "" ? "" : basename(var.sdk_wheel_path)
+  sdk_wheel_md5          = var.sdk_wheel_path == "" ? "" : filemd5(var.sdk_wheel_path)
+  sdk_from_wheel         = !local.sdk_from_checkout && var.sdk_wheel_path != ""
+  layer_build_prefix     = local.use_shared_artifacts_bucket ? "${local.artifacts_key_prefix}/layer-build/" : ""
+  layer_sdk_wheel_object = "${local.layer_build_prefix}sdk-wheel-${local.sdk_wheel_md5}/${local.sdk_wheel_name}"
+  layer_sdk_wheel_key    = local.sdk_from_wheel ? local.layer_sdk_wheel_object : ""
+
+  # The one file the package-mode source archive holds. It names exactly what
+  # is installed, so the archive's MD5 (the build trigger, the object key and
+  # the layer's source_code_hash) changes when the spec or the wheel does, and
+  # at no other time.
+  sdk_install_manifest = local.sdk_from_wheel ? "wheel ${local.sdk_wheel_name} md5 ${local.sdk_wheel_md5}\n" : "${var.sdk_package_spec}\n"
+
+  # The requirement pip installs: the spec, or the path the buildspec copies
+  # the wheel to.
+  layer_sdk_env = local.sdk_from_checkout ? {} : {
+    SDK_SPEC      = local.sdk_from_wheel ? "/tmp/sdk-wheel/${local.sdk_wheel_name}" : var.sdk_package_spec
+    SDK_WHEEL_KEY = local.layer_sdk_wheel_key
+  }
+
+  # --only-binary=:all: refuses source distributions, so no package's own
+  # build code runs in the account while the layer is assembled; every
+  # dependency of the SDK publishes wheels for this image's platform.
+  layer_package_buildspec = <<-EOT
+    version: 0.2
+    phases:
+      install:
+        runtime-versions:
+          python: 3.12
+      build:
+        commands:
+          - echo "Building Lambda layer on Linux from the published SDK..."
+          - mkdir -p /tmp/layer/python
+          - if [ -n "$SDK_WHEEL_KEY" ]; then mkdir -p /tmp/sdk-wheel && aws s3 cp "s3://$OUTPUT_BUCKET/$SDK_WHEEL_KEY" /tmp/sdk-wheel/; fi
+          # Quoted: unquoted, YAML reads the trailing ":all:" as a mapping key.
+          - 'pip install "$SDK_SPEC" -t /tmp/layer/python --quiet --upgrade --no-cache-dir --only-binary=:all:'
+          # The wheel also installs the agent runtime, which runs only in the
+          # AgentCore container. Kept out of the layer so a Lambda import of it
+          # fails, as the two-layer rule in AGENTS.md expects.
+          - rm -rf /tmp/layer/python/socialagent_runtime
+          - |
+            if [ "$HAS_TEMPLATES" = "true" ]; then
+              KEY_PREFIX=""; if [ -n "$OUTPUT_PREFIX" ]; then KEY_PREFIX="$OUTPUT_PREFIX/"; fi; aws s3 cp "s3://$OUTPUT_BUCKET/$${KEY_PREFIX}templates.yaml" /tmp/layer/python/templates.yaml
+            fi
+          - find /tmp/layer -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+          - find /tmp/layer -name "*.pyc" -delete 2>/dev/null || true
+          - find /tmp/layer -type d -name "*.dist-info" -exec rm -rf {} + 2>/dev/null || true
+          - cd /tmp/layer && zip -r /tmp/socialagent-layer.zip python/ -q
+      post_build:
+        commands:
+          - KEY_PREFIX=""; if [ -n "$OUTPUT_PREFIX" ]; then KEY_PREFIX="$OUTPUT_PREFIX/"; fi; aws s3 cp /tmp/socialagent-layer.zip "s3://$OUTPUT_BUCKET/$${KEY_PREFIX}socialagent-layer.zip"
+          - echo "Layer zip uploaded"
+  EOT
 }
 
 # =============================================================================
@@ -121,6 +192,11 @@ resource "aws_s3_bucket_public_access_block" "layer_build" {
 # fileset() reads the disk, not git, so untracked text inside the four trees
 # lands there too. And file() requires valid UTF-8, so any binary the filters
 # above do not drop fails the plan.
+#
+# In package mode the archive holds only sdk-install.txt (local.
+# sdk_install_manifest): CodeBuild needs an S3 source, and keeping the same
+# archive, object and trigger in both modes leaves a checkout stack's
+# addresses as they are.
 data "archive_file" "layer_source" {
   type        = "zip"
   output_path = "${path.root}/.terraform/layer-source.zip"
@@ -132,6 +208,21 @@ data "archive_file" "layer_source" {
       content  = file("${local.repo_root}/${source.value}")
     }
   }
+
+  dynamic "source" {
+    for_each = local.sdk_from_checkout ? [] : [local.sdk_install_manifest]
+    content {
+      filename = "sdk-install.txt"
+      content  = source.value
+    }
+  }
+
+  lifecycle {
+    precondition {
+      condition     = local.sdk_from_checkout || var.sdk_package_spec != "" || var.sdk_wheel_path != ""
+      error_message = "There is no SMART checkout above this Terraform root, so the Lambda layer is installed from the published package: set sdk_package_spec (e.g. \"smart-socialagent==<version>\"; socialagent deploy sets it to the CLI's own version) or sdk_wheel_path."
+    }
+  }
 }
 
 resource "aws_s3_object" "layer_source" {
@@ -139,6 +230,16 @@ resource "aws_s3_object" "layer_source" {
   key    = local.use_shared_artifacts_bucket ? "${local.artifacts_key_prefix}/layer-build/layer-source-${data.archive_file.layer_source.output_md5}.zip" : "layer-source-${data.archive_file.layer_source.output_md5}.zip"
   source = data.archive_file.layer_source.output_path
   etag   = data.archive_file.layer_source.output_md5
+}
+
+resource "aws_s3_object" "layer_sdk_wheel" {
+  count  = local.sdk_from_wheel ? 1 : 0
+  bucket = local.effective_layer_build_bucket
+  # Not layer_sdk_wheel_key: that is "" whenever the object has no instance,
+  # and the provider rejects an empty key while validating the configuration.
+  key    = local.layer_sdk_wheel_object
+  source = var.sdk_wheel_path
+  etag   = local.sdk_wheel_md5
 }
 
 # Upload templates separately if provided
@@ -224,12 +325,19 @@ resource "aws_codebuild_project" "layer_build" {
       name  = "HAS_TEMPLATES"
       value = var.templates_path != "" ? "true" : "false"
     }
+    dynamic "environment_variable" {
+      for_each = local.layer_sdk_env
+      content {
+        name  = environment_variable.key
+        value = environment_variable.value
+      }
+    }
   }
 
   source {
-    type      = "S3"
-    location  = "${local.effective_layer_build_bucket}/${aws_s3_object.layer_source.key}"
-    buildspec = <<-EOT
+    type     = "S3"
+    location = "${local.effective_layer_build_bucket}/${aws_s3_object.layer_source.key}"
+    buildspec = (local.sdk_from_checkout ? <<-EOT
       version: 0.2
       phases:
         install:
@@ -253,6 +361,7 @@ resource "aws_codebuild_project" "layer_build" {
             - KEY_PREFIX=""; if [ -n "$OUTPUT_PREFIX" ]; then KEY_PREFIX="$OUTPUT_PREFIX/"; fi; aws s3 cp /tmp/socialagent-layer.zip "s3://$OUTPUT_BUCKET/$${KEY_PREFIX}socialagent-layer.zip"
             - echo "Layer zip uploaded"
     EOT
+    : local.layer_package_buildspec)
   }
 
   logs_config {
@@ -304,7 +413,7 @@ resource "null_resource" "build_layer" {
     EOT
   }
 
-  depends_on = [aws_codebuild_project.layer_build, aws_s3_object.layer_source]
+  depends_on = [aws_codebuild_project.layer_build, aws_s3_object.layer_source, aws_s3_object.layer_sdk_wheel]
 }
 
 resource "aws_lambda_layer_version" "socialagent" {

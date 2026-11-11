@@ -527,6 +527,39 @@ variable "stack_blueprint" {
 }
 
 # =============================================================================
+# SDK Source (package mode)
+# =============================================================================
+# Package mode (packaging.tf): the Lambda layer and the template sync install
+# the SDK from a package instead of a checkout's source. It is the only mode
+# when there is no SMART checkout above this root, where socialagent deploy
+# sets sdk_package_spec to the CLI's own distribution and version; in a
+# checkout, setting either variable selects it.
+
+variable "sdk_package_spec" {
+  description = "The pip requirement CodeBuild installs the SDK from, pinned to one version, e.g. \"smart-socialagent==2026.10.0\". Installed from the package index (PyPI) inside the account, wheels only. Required when there is no SMART checkout above this root, unless sdk_wheel_path is set; in a checkout, setting it installs this instead of the checkout's source."
+  type        = string
+  default     = ""
+
+  validation {
+    # An exact pin: a range, a wildcard, extras or a URL would let the layer
+    # change between two builds of the same configuration.
+    condition     = var.sdk_package_spec == "" || can(regex("^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?==[0-9][0-9A-Za-z.!+_-]*$", var.sdk_package_spec))
+    error_message = "Must be <distribution>==<exact version>, e.g. \"smart-socialagent==2026.10.0\": no ranges, wildcards, extras or URLs."
+  }
+}
+
+variable "sdk_wheel_path" {
+  description = "A local SDK wheel to install instead of sdk_package_spec, for testing a build that is not published. Uploaded to the stack's layer-build and template-sync artifacts under a key carrying its MD5. Its dependencies still come from the package index. Takes precedence over sdk_package_spec."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.sdk_wheel_path == "" || (can(regex("^[A-Za-z0-9_.+-]+\\.whl$", basename(var.sdk_wheel_path))) && fileexists(var.sdk_wheel_path))
+    error_message = "Must be the path of an existing .whl file whose name holds only letters, digits and . _ + -."
+  }
+}
+
+# =============================================================================
 # Error Messages
 # =============================================================================
 

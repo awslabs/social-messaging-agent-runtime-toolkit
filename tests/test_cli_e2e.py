@@ -261,10 +261,12 @@ def test_init_inside_checkout_targets_projects_and_writes_no_tfvars(tmp_path, en
     assert "terraform apply" not in r.stdout
 
 
-def test_init_standalone_says_deploy_needs_the_checkout(ws, env):
+def test_init_standalone_says_deploy_installs_the_published_sdk(ws, env):
     r = run("init", "solo-bot", cwd=ws, env=env)
     assert r.returncode == 0
-    assert "Deploying needs the SMART checkout" in r.stdout
+    assert "Deploying needs the SMART checkout" not in r.stdout
+    assert "installs the SDK in AWS from the package index" in r.stdout
+    assert "--sdk-wheel <wheel>" in r.stdout
 
 
 @pytest.mark.parametrize(

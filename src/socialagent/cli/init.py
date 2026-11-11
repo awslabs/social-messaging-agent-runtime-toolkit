@@ -163,11 +163,10 @@ def cmd_init(args: argparse.Namespace) -> None:
     print("     socialagent deploy --plan    # review")
     print("     socialagent deploy")
     if not repo_root:
-        # bootstrap, status and config run the Terraform this CLI ships; the
-        # Lambda layer is still built from the checkout's source (packaging.tf).
+        # With no checkout, the Terraform this CLI ships builds the Lambda
+        # layer from the published package (packaging.tf, package mode).
         print(
-            "\n   Deploying needs the SMART checkout (infra-terraform/ beside the SDK"
-            "\n   source the Lambda layer is built from): run from inside it, or pass"
-            "\n   --tf-dir <checkout>/infra-terraform. bootstrap, status and config"
-            "\n   work from this install."
+            "\n   Outside a SMART checkout, deploy runs the Terraform this CLI ships"
+            "\n   and installs the SDK in AWS from the package index at this CLI's"
+            "\n   version; to deploy an unreleased build, add --sdk-wheel <wheel>."
         )

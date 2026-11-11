@@ -352,19 +352,173 @@ def test_config_sync_runs_terraform_in_the_managed_copy(
     assert seen["tf_dir"] == str(_copy(project))
 
 
-def test_deploy_from_the_managed_copy_stops_before_terraform(packaged, project):
-    # The layer build needs the SDK source next to the root, which only a
-    # checkout has; deploy and destroy say so instead of failing mid-plan.
-    calls: list = []
+SPEC = "smart-socialagent==2026.99.0"
 
+
+def _fake_terraform(calls: list):
     def runner(cmd, **kw):
         calls.append(cmd)
-        return Result(0)
+        # `terraform show -json` of a plan that changes nothing.
+        return Result(0, stdout="{}" if "show" in cmd else "")
 
-    for fn, name in ((_deploy.deploy, "deploy"), (_deploy.destroy, "destroy")):
-        with pytest.raises(CliError, match=f"`socialagent {name}` cannot run from"):
-            fn(_args(yes=True), runner=runner, account=ACCOUNT)
+    return runner
+
+
+def _deployed_tfvars(project: Path) -> dict:
+    return json.loads((project / ".socialagent" / "my-bot-dev.tfvars.json").read_text())
+
+
+def test_deploy_from_the_managed_copy_installs_the_clis_own_package(
+    packaged, project, monkeypatch, capsys
+):
+    monkeypatch.setattr(_infra, "sdk_package_spec", lambda: SPEC)
+    monkeypatch.setattr(_infra, "_installed_from_index", lambda name: True)
+    calls: list = []
+    _deploy.deploy(
+        _args(skip_model_check=True), runner=_fake_terraform(calls), account=ACCOUNT
+    )
+    tfvars = _deployed_tfvars(project)
+    assert tfvars["sdk_package_spec"] == SPEC
+    assert "sdk_wheel_path" not in tfvars
+    assert any(
+        c[:2] == ["terraform", f"-chdir={_copy(project)}"] and "plan" in c
+        for c in calls
+    )
+    out = capsys.readouterr().out
+    assert f"SDK: {SPEC}, installed in CodeBuild from the package index" in out
+    assert "may not be published" not in out
+
+
+def test_destroy_from_the_managed_copy_plans_with_the_spec(
+    packaged, project, monkeypatch
+):
+    monkeypatch.setattr(_infra, "sdk_package_spec", lambda: SPEC)
+    calls: list = []
+    _deploy.destroy(_args(yes=True), runner=_fake_terraform(calls), account=ACCOUNT)
+    assert _deployed_tfvars(project)["sdk_package_spec"] == SPEC
+    assert any("destroy" in c for c in calls)
+
+
+def test_deploy_passes_a_wheel_by_its_absolute_path(
+    tmp_path, packaged, project, monkeypatch, capsys
+):
+    monkeypatch.setattr(_infra, "sdk_package_spec", lambda: SPEC)
+    # Relative to where the command runs: the project directory.
+    wheel = project / "dist" / "smart_socialagent-2026.99.0-py3-none-any.whl"
+    wheel.parent.mkdir()
+    wheel.write_bytes(b"PK")
+    _deploy.deploy(
+        _args(skip_model_check=True, sdk_wheel="dist/" + wheel.name),
+        runner=_fake_terraform([]),
+        account=ACCOUNT,
+    )
+    tfvars = _deployed_tfvars(project)
+    assert tfvars["sdk_wheel_path"] == str(wheel.resolve())
+    assert f"SDK: the wheel {wheel.resolve()}" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("name", "create", "message"),
+    [
+        ("missing.whl", False, "no such file"),
+        ("smart_socialagent-2026.99.0.tar.gz", True, "not a .whl file"),
+    ],
+)
+def test_sdk_wheel_must_be_an_existing_wheel(
+    tmp_path, packaged, project, name, create, message
+):
+    path = tmp_path / name
+    if create:
+        path.write_bytes(b"x")
+    calls: list = []
+    with pytest.raises(CliError, match=f"--sdk-wheel {path}: {message}"):
+        _deploy.deploy(
+            _args(skip_model_check=True, sdk_wheel=str(path)),
+            runner=_fake_terraform(calls),
+            account=ACCOUNT,
+        )
     assert calls == []
+
+
+def test_a_checkout_gets_no_sdk_variables(tmp_path):
+    # A checkout builds from its own source, so its tfvars and plan stay as
+    # they were before package mode existed.
+    tf = tmp_path / "repo" / "infra-terraform"
+    tf.mkdir(parents=True)
+    (tf.parent / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    assert _infra.sdk_from_checkout(tf)
+    assert _infra.sdk_tfvars(tf) == {}
+    wheel = tmp_path / "w.whl"
+    assert _infra.sdk_tfvars(tf, wheel) == {"sdk_wheel_path": str(wheel)}
+
+
+def test_any_other_root_gets_the_spec(tmp_path, monkeypatch):
+    monkeypatch.setattr(_infra, "sdk_package_spec", lambda: SPEC)
+    tf = tmp_path / "elsewhere" / "infra-terraform"
+    tf.mkdir(parents=True)
+    assert not _infra.sdk_from_checkout(tf)
+    assert _infra.sdk_tfvars(tf) == {"sdk_package_spec": SPEC}
+
+
+def test_the_spec_names_the_installed_distribution_at_its_version(monkeypatch):
+    # The distribution is read from the metadata of what provides `socialagent`,
+    # so the spec follows a rename of [project] name with no code change.
+    monkeypatch.setattr(
+        _infra.metadata,
+        "packages_distributions",
+        lambda: {"socialagent": ["smart-socialagent"]},
+    )
+    monkeypatch.setattr(
+        _infra.metadata,
+        "version",
+        lambda name: {"smart-socialagent": "2026.11.0"}[name],
+    )
+    assert _infra.sdk_package_spec() == "smart-socialagent==2026.11.0"
+
+
+def test_the_spec_of_this_environment_is_its_own_distribution():
+    from importlib import metadata
+
+    name = _infra.sdk_distribution()
+    assert _infra.sdk_package_spec() == f"{name}=={metadata.version(name)}"
+
+
+def test_two_distributions_providing_the_sdk_are_refused(monkeypatch):
+    monkeypatch.setattr(
+        _infra.metadata,
+        "packages_distributions",
+        lambda: {"socialagent": ["socialagent", "smart-socialagent"]},
+    )
+    with pytest.raises(CliError, match="more than one installed distribution"):
+        _infra.sdk_distribution()
+
+
+def test_without_installed_metadata_the_checkouts_pyproject_names_it(monkeypatch):
+    import tomllib
+
+    monkeypatch.setattr(_infra.metadata, "packages_distributions", lambda: {})
+    name = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())["project"]["name"]
+    assert _infra.sdk_distribution() == name
+
+
+def test_a_cli_not_installed_from_an_index_says_the_spec_may_be_unpublished(
+    monkeypatch,
+):
+    monkeypatch.setattr(_infra, "_installed_from_index", lambda name: False)
+    line = _infra.describe_sdk({"sdk_package_spec": SPEC})
+    assert f"{SPEC} may not be published" in line and "--sdk-wheel" in line
+    assert _infra.describe_sdk({}) is None
+
+
+def test_config_tfvars_outside_a_checkout_carries_the_spec(
+    packaged, project, monkeypatch, capsys
+):
+    monkeypatch.setattr(_infra, "sdk_package_spec", lambda: SPEC)
+    cmd_config(
+        argparse.Namespace(config_command="tfvars", env="dev", tf_dir=""),
+        argparse.ArgumentParser(),
+    )
+    assert json.loads(capsys.readouterr().out)["sdk_package_spec"] == SPEC
 
 
 # ── PATH preflight ───────────────────────────────────────────────────────────

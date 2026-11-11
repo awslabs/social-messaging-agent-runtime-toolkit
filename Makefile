@@ -170,6 +170,9 @@ tf-validate: tf-validate-roots ## Validate Terraform configuration (all three ro
 	@# data directory tf-validate-roots initialised. Needs Terraform 1.11 or
 	@# later, for override_during, which is also why the files sit in tftest/
 	@# and not in the tests/ that init and validate parse.
+	@# The second init installs the modules the run blocks there load on their
+	@# own (`module { source = ... }`), which a plain init does not.
+	TF_DATA_DIR=$(TF_VALIDATE_DIR)/stack terraform -chdir=$(TF_DIR) init -backend=false -input=false -test-directory=tftest >/dev/null
 	TF_DATA_DIR=$(TF_VALIDATE_DIR)/stack terraform -chdir=$(TF_DIR) test -test-directory=tftest
 
 e2e: ## Run E2E tests against a deployed stack (ENV=<project>-<env>)

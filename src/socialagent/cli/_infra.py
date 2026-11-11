@@ -25,9 +25,11 @@ is CLI-owned: edits there are overwritten. Terraform's local state is
 carried into the replacement. Copies made by other CLI versions are left
 where they are, because their bootstrap state, if any, lives in them.
 
-The managed copy cannot deploy yet: ``packaging.tf`` builds the Lambda layer
-from the SDK source in the root's parent directory, which only a checkout
-has. :func:`check_deployable` says so before Terraform fails on it.
+A root with no checkout above it builds the Lambda layer and the template
+sync from the published package instead of the SDK source (package mode in
+``packaging.tf``). :func:`sdk_tfvars` gives such a root what to install: this
+CLI's own distribution at its own version, or a wheel passed to ``deploy
+--sdk-wheel``.
 """
 
 from __future__ import annotations
@@ -39,6 +41,8 @@ import os
 import re
 import shutil
 import sys
+import tomllib
+from importlib import metadata
 from pathlib import Path
 
 from socialagent.cli import _tfvars
@@ -241,23 +245,112 @@ def find_tf_dir(
     return materialize(project_dir)
 
 
-def check_deployable(tf_dir: Path, project_dir: Path, command: str) -> None:
-    """Refuse ``deploy``/``destroy`` from the managed copy, which cannot build the layer.
+# The import package whose distribution package mode installs.
+_SDK_IMPORT = "socialagent"
 
-    ``packaging.tf`` zips the SDK from ``${path.root}/..`` and reads
-    ``pyproject.toml`` there with ``file()``, so every plan of the managed copy
-    (a destroy plans too) fails on a path that only a checkout has.
+
+def sdk_from_checkout(tf_dir: Path) -> bool:
+    """Whether *tf_dir* builds the SDK from a checkout's source.
+
+    The same test as ``fileexists("${path.root}/../pyproject.toml")`` in
+    ``packaging.tf``, so the CLI and Terraform agree on the mode.
     """
-    if (
-        not is_managed(tf_dir, project_dir)
-        or (tf_dir.parent / "pyproject.toml").is_file()
-    ):
-        return
-    raise CliError(
-        f"`socialagent {command}` cannot run from the Terraform this CLI manages "
-        f"({tf_dir}) yet: packaging.tf builds the Lambda layer from the SDK source "
-        "next to infra-terraform/ (pyproject.toml, src/socialagent), which only a "
-        "SMART checkout has. Run it from a project inside the checkout, or pass "
-        "--tf-dir <checkout>/infra-terraform. bootstrap, status --refresh and "
-        "config work from the managed copy."
-    )
+    return (tf_dir / ".." / "pyproject.toml").resolve().is_file()
+
+
+def sdk_distribution() -> str:
+    """The distribution this CLI is installed as: ``socialagent``, or ``smart-socialagent`` once renamed.
+
+    Read from the installed metadata (the distribution that provides the
+    ``socialagent`` import package), else from the ``pyproject.toml`` of the
+    checkout this module runs from, so a rename of ``[project] name`` needs no
+    change here.
+    """
+    found = sorted(set(metadata.packages_distributions().get(_SDK_IMPORT, [])))
+    if len(found) == 1:
+        return found[0]
+    if len(found) > 1:
+        raise CliError(
+            f"more than one installed distribution provides `{_SDK_IMPORT}` "
+            f"({', '.join(found)}), so the SDK version to deploy is ambiguous: "
+            "uninstall all but one"
+        )
+    pyproject = Path(__file__).resolve().parents[3] / "pyproject.toml"
+    try:
+        return tomllib.loads(pyproject.read_text())["project"]["name"]
+    except (OSError, ValueError, KeyError) as exc:
+        raise CliError(
+            f"cannot tell which distribution provides `{_SDK_IMPORT}`; "
+            "pass --sdk-wheel <path to a built wheel>"
+        ) from exc
+
+
+def sdk_package_spec() -> str:
+    """``<distribution>==<this CLI's version>``: the package the stack installs.
+
+    Pinned to the CLI's own version because the Terraform it runs is the copy
+    this CLI ships, and the layer and template sync must come from the same
+    release.
+    """
+    distribution = sdk_distribution()
+    try:
+        version = metadata.version(distribution)
+    except metadata.PackageNotFoundError:
+        from socialagent.cli import _version  # noqa: PLC0415 — cli/__init__ imports the command modules
+
+        version = _version()
+    return f"{distribution}=={version}"
+
+
+def _installed_from_index(distribution: str) -> bool:
+    """False when pip records a direct URL: a local wheel, a directory or a VCS checkout."""
+    try:
+        return metadata.distribution(distribution).read_text("direct_url.json") is None
+    except metadata.PackageNotFoundError:
+        return False
+
+
+def check_sdk_wheel(path: str) -> Path:
+    """The absolute path of the wheel passed to ``--sdk-wheel``, once it is one."""
+    wheel = Path(path).expanduser().resolve()
+    if wheel.suffix != ".whl":
+        raise CliError(f"--sdk-wheel {path}: not a .whl file")
+    if not wheel.is_file():
+        raise CliError(f"--sdk-wheel {path}: no such file")
+    return wheel
+
+
+def sdk_tfvars(tf_dir: Path, wheel: Path | None = None) -> dict[str, str]:
+    """The SDK variables for *tf_dir*: none in a checkout, unless a wheel is given.
+
+    A checkout builds from its own source, and this sets nothing there, so
+    its plan is what it always was. Any other root (the managed copy, or a
+    ``--tf-dir`` with no checkout above it) gets this CLI's spec, and a wheel
+    when given; a wheel given in a checkout selects package mode there too.
+    """
+    tfvars: dict[str, str] = {}
+    if not sdk_from_checkout(tf_dir):
+        tfvars["sdk_package_spec"] = sdk_package_spec()
+    if wheel is not None:
+        tfvars["sdk_wheel_path"] = str(wheel)
+    return tfvars
+
+
+def describe_sdk(tfvars: dict[str, str]) -> str | None:
+    """One line saying what the layer is installed from, or None for a checkout build."""
+    if tfvars.get("sdk_wheel_path"):
+        return (
+            f"SDK: the wheel {tfvars['sdk_wheel_path']}, installed in CodeBuild "
+            "with its dependencies from the package index"
+        )
+    spec = tfvars.get("sdk_package_spec")
+    if not spec:
+        return None
+    line = f"SDK: {spec}, installed in CodeBuild from the package index (wheels only)"
+    distribution = spec.partition("==")[0]
+    if not _installed_from_index(distribution):
+        line += (
+            f"\n! This CLI was not installed from a package index, so {spec} may "
+            "not be published; to deploy this build, pass --sdk-wheel <its wheel>"
+        )
+    return line
