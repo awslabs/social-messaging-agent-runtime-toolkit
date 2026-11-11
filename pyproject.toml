@@ -19,7 +19,7 @@ dependencies = [
 Homepage = "https://github.com/awslabs/social-messaging-agent-runtime-toolkit"
 Repository = "https://github.com/awslabs/social-messaging-agent-runtime-toolkit"
 Issues = "https://github.com/awslabs/social-messaging-agent-runtime-toolkit/issues"
-Documentation = "https://github.com/awslabs/social-messaging-agent-runtime-toolkit/tree/main/docs"
+Documentation = "https://awslabs.github.io/social-messaging-agent-runtime-toolkit/"
 
 [project.scripts]
 socialagent = "socialagent.cli:main"

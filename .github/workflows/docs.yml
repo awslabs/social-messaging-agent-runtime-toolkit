@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Builds the documentation site (site/, Astro Starlight over docs/) on every
-# pull request that touches it. The build fails on a broken internal link or
-# anchor (starlight-links-validator).
+# pull request that touches it, and publishes it to GitHub Pages from main.
+# The build fails on a broken internal link or anchor (starlight-links-validator).
 name: Docs
 
 on:
@@ -12,8 +12,15 @@ on:
       - "docs/**"
       - "site/**"
       - ".github/workflows/docs.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "site/**"
+      - ".github/workflows/docs.yml"
   workflow_dispatch:
 
+# Read-only by default; only the deploy job below gets the Pages grants.
 permissions:
   contents: read
 
@@ -44,3 +51,24 @@ jobs:
       - name: build (fails on broken links)
         working-directory: site
         run: npm run build
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        if: github.event_name != 'pull_request'
+        with:
+          path: site/dist
+
+  # Publishes only from main. Needs Settings > Pages > Source = GitHub Actions.
+  deploy:
+    name: deploy to GitHub Pages
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
