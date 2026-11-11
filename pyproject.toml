@@ -43,7 +43,7 @@ socialagent = "socialagent.cli:main"
 # `license` and the `license-files` list above as a hard build error, not a
 # warning. Build backends resolve in build isolation and are absent from
 # uv.lock, so this bound is the only thing pinning them.
-requires = ["hatchling>=1.27"]
+requires = ["hatchling>=1.33.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
