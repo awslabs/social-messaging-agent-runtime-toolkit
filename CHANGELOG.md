@@ -33,7 +33,7 @@ All notable changes to SMART, the Social Messaging Agent Runtime Toolkit, are re
 - The Stack Detail header, the Overview's "Last deploy" column and the Stacks page's "Last deploy" column read the last deploy from the stack's own CodeBuild project, so a zip stack or a stack deployed in another region no longer shows "-" where it was deployed.
 
 ### Developer experience
-- Published on PyPI as `smart-socialagent` ([ADR-0008](docs/adr/0008-pypi-distribution-name.md)): `socialagent` collides with an existing project there. The command and the import package stay `socialagent`, and `deploy` still needs a clone of the repository for `infra-terraform/`. The package page (`PYPI.md`) opens with the beta and "AS IS" notice.
+- Published on PyPI as `smart-socialagent` ([ADR-0008](docs/adr/0008-pypi-distribution-name.md)): `socialagent` collides with an existing project there. The command and the import package stay `socialagent`, and `deploy` and `destroy` still need a clone of the repository, for the SDK source the Lambda layer is built from: the package ships the stack's Terraform, so `bootstrap`, `status --refresh` and `config` work without one. The package page (`PYPI.md`) opens with the beta and "AS IS" notice.
 - A Release workflow publishes to PyPI from a GitHub Release, through trusted publishing and a `pypi` environment with required reviewers; `CONTRIBUTING.md` has the steps.
 
 ## [2026.10.0] - 2026-11-05
