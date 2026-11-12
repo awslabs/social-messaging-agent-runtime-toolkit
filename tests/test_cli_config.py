@@ -29,6 +29,7 @@ from socialagent.cli.config_cmd import _find_tf_dir, cmd_config
 from socialagent.cli.config_file import (
     _SCHEMA_VERSION,
     TerraformOutputError,
+    file_schema_version,
     find_config,
     load,
     populate_outputs,
@@ -329,6 +330,28 @@ def test_load_rejects_invalid_config(project, mutation, expected):
 
 def test_load_missing_file_returns_empty(tmp_path):
     assert load(tmp_path / "socialagent.dev.yaml") == {}
+
+
+def test_load_rejects_a_duplicate_top_level_key(project):
+    cmd_config(_args("init"), _parser())
+    cfg_path = find_config(project, "dev")
+
+    # A pasted second top-level key (e.g. from a README snippet) must not
+    # silently win over the first and drop its settings.
+    cfg_path.write_text(cfg_path.read_text() + "\nproject: other-bot\n")
+
+    with pytest.raises(ValueError, match="duplicate key 'project'"):
+        load(cfg_path)
+
+
+def test_file_schema_version_rejects_a_duplicate_top_level_key(project):
+    cmd_config(_args("init"), _parser())
+    cfg_path = find_config(project, "dev")
+
+    cfg_path.write_text(cfg_path.read_text() + "\nschema_version: 1\n")
+
+    with pytest.raises(yaml.YAMLError, match="duplicate key 'schema_version'"):
+        file_schema_version(cfg_path)
 
 
 # ── save ──────────────────────────────────────────────────────────────────────
