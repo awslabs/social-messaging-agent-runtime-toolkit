@@ -21,7 +21,7 @@ socialagent dev                    # run it locally, no deployed stack
 
 The `minimal` blueprint runs locally with no AWS at all; the others call Amazon Bedrock, so they need AWS credentials and model access.
 
-**Deploying needs a clone of the repository for now.** `socialagent bootstrap` and `socialagent deploy` run the Terraform in the repository's `infra-terraform/`, which this package does not include yet; packaging it with the project is planned for 2026.11. To deploy, clone the release that matches `socialagent --version` (`git clone --branch v<version> https://github.com/awslabs/social-messaging-agent-runtime-toolkit`) and run both commands from your project directory with `--tf-dir <checkout>/infra-terraform`; the getting-started guide there walks through it.
+**Deploying still needs a clone of the repository.** The package ships the stack's Terraform: outside a clone, `socialagent bootstrap`, `socialagent status --refresh` and `socialagent config` run a copy the CLI writes to the project's `.socialagent/infra/` (managed by the CLI: edits there are overwritten). `socialagent deploy` and `socialagent destroy` refuse that copy for now, because the stack's Lambda layer is built from the SDK source in the repository; building it from this package is planned for a later release. To deploy, clone the release that matches `socialagent --version` (`git clone --branch v<version> https://github.com/awslabs/social-messaging-agent-runtime-toolkit`) and run `deploy` from your project directory with `--tf-dir <checkout>/infra-terraform`; the getting-started guide there walks through it.
 
 ## Links
 

@@ -19,6 +19,11 @@ from socialagent.cli.recipe_cmd import cmd_recipe_add, cmd_recipe_list
 from socialagent.cli.templates import cmd_templates_sync, cmd_templates_validate
 
 
+_TF_DIR_HELP = (
+    "Terraform root (default: the checkout's infra-terraform/, else the CLI's own)"
+)
+
+
 def _version() -> str:
     """The release this CLI belongs to, e.g. ``2026.10.0``.
 
@@ -176,7 +181,9 @@ def main() -> None:
         "--env", default="dev", choices=ENVIRONMENTS, help="Environment (default: dev)"
     )
     p_cfg_sync.add_argument(
-        "--tf-dir", default="", help="Path to infra-terraform/ (auto-detected)"
+        "--tf-dir",
+        default="",
+        help=_TF_DIR_HELP,
     )
     p_cfg_show = cfg_sub.add_parser("show", help="Show current config")
     p_cfg_show.add_argument(
@@ -190,7 +197,9 @@ def main() -> None:
         "--env", default="dev", choices=ENVIRONMENTS, help="Environment (default: dev)"
     )
     p_cfg_tfvars.add_argument(
-        "--tf-dir", default="", help="Path to infra-terraform/ (auto-detected)"
+        "--tf-dir",
+        default="",
+        help=_TF_DIR_HELP,
     )
 
     # socialagent deploy / destroy
@@ -212,7 +221,9 @@ def main() -> None:
         "--refresh", action="store_true", help="Re-read outputs from Terraform first"
     )
     p_status.add_argument(
-        "--tf-dir", default="", help="Path to infra-terraform/ (auto-detected)"
+        "--tf-dir",
+        default="",
+        help=_TF_DIR_HELP,
     )
     for p in (p_deploy, p_destroy, p_boot):
         p.add_argument(
@@ -225,7 +236,9 @@ def main() -> None:
             "--yes", action="store_true", help="Apply without asking for confirmation"
         )
         p.add_argument(
-            "--tf-dir", default="", help="Path to infra-terraform/ (auto-detected)"
+            "--tf-dir",
+            default="",
+            help=_TF_DIR_HELP,
         )
     p_deploy.add_argument(
         "--plan", action="store_true", help="Show the plan only; change nothing"

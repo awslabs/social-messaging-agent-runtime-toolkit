@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from socialagent.cli import _deploy, _schema, _tfvars
+from socialagent.cli import _deploy, _infra, _schema, _tfvars
 from socialagent.cli._errors import CliError
 from socialagent.cli._runner import CommandError, Result
 
@@ -74,6 +74,9 @@ def checkout(tmp_path, monkeypatch):
     (tf / "variables.tf").write_text(
         (REPO_ROOT / "infra-terraform" / "variables.tf").read_text()
     )
+    # What makes it a SMART checkout rather than any infra-terraform/ (_infra._is_checkout).
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "smart-socialagent"\n')
+    (tmp_path / "src" / "socialagent").mkdir(parents=True)
     project = tmp_path / "projects" / "my-bot"
     (project / "handlers").mkdir(parents=True)
     (project / "socialagent.dev.yaml").write_text(
@@ -249,6 +252,8 @@ def test_missing_config_and_missing_checkout(tmp_path, monkeypatch):
         "schema_version: 3\nproject: my-bot\nenvironment: dev\nregion: us-east-1\n"
     )
     (tmp_path / ".git").mkdir()
+    # Nor does the CLI ship any Terraform to fall back on.
+    monkeypatch.setattr(_infra, "terraform_dir", lambda: tmp_path / "no-such-dir")
     with pytest.raises(CliError, match="could not find infra-terraform"):
         _deploy.deploy(_args(), runner=FakeRunner(), account=ACCOUNT)
 

@@ -33,7 +33,7 @@ locals {
   # truth is the VERSION file at the repository root; a test holds the two equal,
   # so bump them together. It is a literal so the Terraform does not depend on a
   # file outside its own directory.
-  solution_version = "2026.10.0"
+  solution_version = "2026.11.0"
 
   # Common tags applied to all resources via provider default_tags
   common_tags = merge(var.tags, {

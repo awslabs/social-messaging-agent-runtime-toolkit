@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Locate the CLI's data directories (``blueprints/``, ``recipes/``, ``socialagent-runtime/``).
+"""Locate the CLI's data directories (``blueprints/``, ``recipes/``, ``socialagent-runtime/``, ``infra-terraform/``).
 
 These directories are template-as-code: ``socialagent init`` and ``socialagent recipe add`` copy
 them verbatim into a new project, and nothing imports them at runtime. They live
@@ -14,7 +14,10 @@ So the build force-includes them under ``socialagent/cli/_assets/`` (see
 each lookup here prefers that packaged copy, falling back to the repo-root
 location when running from a source checkout. Both layouts must keep working:
 the packaged one is what external users get, the checkout one is what the test
-suite and `uv run socialagent` use.
+suite and `uv run socialagent` use. ``infra-terraform/`` lands under
+``_assets/`` too, through an ``only-include`` (``pyproject.toml`` says why),
+and is what ``_infra`` copies into a project that has no checkout to run
+Terraform from.
 """
 
 from __future__ import annotations
@@ -55,3 +58,8 @@ def recipes_dir() -> Path:
 def socialagent_runtime_dir() -> Path:
     """Source of the ``socialagent_runtime`` package vendored into each new project."""
     return _resolve("socialagent-runtime", "packages/socialagent-runtime")
+
+
+def terraform_dir() -> Path:
+    """The stack's Terraform root, which ``_infra`` materializes into a project."""
+    return _resolve("infra-terraform", "infra-terraform")

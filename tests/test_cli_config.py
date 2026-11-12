@@ -25,7 +25,9 @@ import textwrap
 import pytest
 import yaml
 
-from socialagent.cli.config_cmd import _find_tf_dir, cmd_config
+from socialagent.cli import _infra
+from socialagent.cli._errors import CliError
+from socialagent.cli.config_cmd import cmd_config
 from socialagent.cli.config_file import (
     _SCHEMA_VERSION,
     TerraformOutputError,
@@ -228,14 +230,16 @@ def test_config_sync_without_config_exits_with_guidance(project, capsys):
     assert "socialagent config init" in captured.out
 
 
-def test_config_sync_without_tf_dir_exits_nonzero(project, capsys):
+def test_config_sync_without_tf_dir_exits_nonzero(project, capsys, monkeypatch):
+    # No checkout above the project and no Terraform shipped with the CLI.
+    monkeypatch.setattr(_infra, "terraform_dir", lambda: project / "no-such-dir")
     cmd_config(_args("init"), _parser())
     capsys.readouterr()
 
     with pytest.raises(SystemExit) as exc:
         cmd_config(_args("sync", tf_dir=None), _parser())
     assert exc.value.code == 1
-    assert "Could not find infra-terraform" in capsys.readouterr().err
+    assert "could not find infra-terraform" in capsys.readouterr().err
 
 
 def test_config_sync_merges_terraform_outputs(project, tmp_path, monkeypatch, capsys):
@@ -412,20 +416,30 @@ def test_save_load_and_schema_version_are_utf8_under_a_non_utf8_locale(tmp_path)
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 
+def _repo_markers(root):
+    """What makes *root* a SMART checkout besides its infra-terraform/main.tf."""
+    (root / "pyproject.toml").write_text('[project]\nname = "smart-socialagent"\n')
+    (root / "src" / "socialagent").mkdir(parents=True)
+
+
 def test_find_tf_dir_walks_up_to_repo_root(tmp_path):
     tf_dir = tmp_path / "infra-terraform"
     tf_dir.mkdir()
     (tf_dir / "main.tf").write_text("# fixture\n")
+    _repo_markers(tmp_path)
     nested = tmp_path / "projects" / "mybot"
     nested.mkdir(parents=True)
 
-    assert _find_tf_dir(nested) == tf_dir
+    assert _infra.find_tf_dir(nested) == tf_dir.resolve()
 
 
-def test_find_tf_dir_requires_main_tf(tmp_path):
+def test_find_tf_dir_requires_main_tf(tmp_path, monkeypatch):
     """A directory named infra-terraform without main.tf is not a match."""
+    monkeypatch.setattr(_infra, "terraform_dir", lambda: tmp_path / "no-such-dir")
     (tmp_path / "infra-terraform").mkdir()
-    assert _find_tf_dir(tmp_path) is None
+    _repo_markers(tmp_path)
+    with pytest.raises(CliError, match="could not find infra-terraform"):
+        _infra.find_tf_dir(tmp_path)
 
 
 def test_to_dev_env_maps_outputs_to_env_vars():

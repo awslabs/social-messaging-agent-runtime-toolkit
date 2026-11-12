@@ -16,9 +16,11 @@
 # ruff arrives alone because a minor release can add lint rules. `hashicorp/aws`
 # majors are not proposed: a provider major is a planned migration (in the
 # admin console it changes the Cognito and IAM resources), not a weekly bump.
-# pip and npm raise a range's floor only when the new version needs it. The
-# workflows pin every action to a full commit SHA with the release tag in a
-# trailing comment; Dependabot moves both.
+# uv, pip and npm raise a range's floor only when the new version needs it,
+# so a published `smart-socialagent` never asks for a newer dependency than it
+# needs and constrains its users' environments no more than it must; uv.lock
+# still moves to the latest release. The workflows pin every action to a full
+# commit SHA with the release tag in a trailing comment; Dependabot moves both.
 #
 # Every entry has a cooldown: a release is not proposed until it is 7 days old,
 # so a compromised or yanked version has time to be caught upstream before it
@@ -29,6 +31,7 @@ version: 2
 updates:
   - package-ecosystem: uv
     directory: /
+    versioning-strategy: increase-if-necessary
     schedule:
       interval: weekly
     cooldown:

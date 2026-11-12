@@ -7,7 +7,7 @@
 [![CI](https://github.com/awslabs/social-messaging-agent-runtime-toolkit/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/awslabs/social-messaging-agent-runtime-toolkit/actions/workflows/ci.yml?query=branch%3Amain)
 [![Security](https://github.com/awslabs/social-messaging-agent-runtime-toolkit/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/awslabs/social-messaging-agent-runtime-toolkit/actions/workflows/security.yml?query=branch%3Amain)
 ![Status](https://img.shields.io/badge/status-beta-orange)
-![Version](https://img.shields.io/badge/version-2026.10.0-blue)
+![Version](https://img.shields.io/badge/version-2026.11.0-blue)
 [![PyPI](https://img.shields.io/pypi/v/smart-socialagent)](https://pypi.org/project/smart-socialagent/)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![IaC](https://img.shields.io/badge/IaC-Terraform-7B42BC)
@@ -318,13 +318,13 @@ WhatsApp is a trademark of Meta Platforms, Inc. This project integrates with Wha
 
 ## Anonymous Operational Metrics
 
-Each deployment creates a small CloudFormation stack whose description carries an anonymous tracking code, so AWS can count how many times this solution is deployed. It contains one free SSM Standard parameter and nothing else, and no other resource depends on it. Collected: the fact of a deployment. Not collected: usage data, message content, conversation data, or customer data. Opt out with `terraform.enable_deployment_metrics: false` in `socialagent.<env>.yaml`, before the first deploy (turning it off later adds a deletion and does not undo the count). It removes the stack but not the `TrackingId` tag carrying the same code on every taggable resource; that tag is not collected. Full detail, including the extra IAM permissions it needs, is in [infra-terraform/README.md](infra-terraform/README.md#operational-metrics-collection).
+Each deployment creates a small CloudFormation stack whose description carries an anonymous tracking code, so AWS can count how many times this solution is deployed. It contains one free SSM Standard parameter and nothing else, and no other resource depends on it. Collected: the fact of a deployment and the solution version (release) deployed. Not collected: usage data, message content, conversation data, or customer data. Opt out with `terraform.enable_deployment_metrics: false` in `socialagent.<env>.yaml`, before the first deploy (turning it off later adds a deletion and does not undo the count). It removes the stack but not the `TrackingId` tag carrying the same code on every taggable resource; that tag is not collected. Full detail, including the extra IAM permissions it needs, is in [infra-terraform/README.md](infra-terraform/README.md#operational-metrics-collection).
 
 How AWS handles the information it collects is described in the [AWS Privacy Policy](https://aws.amazon.com/privacy/).
 
 | What is emitted | Where | Used for |
 |-----------------|-------|----------|
-| The deployment marker stack, `<env>-<project>-deployment-metrics`: a CloudFormation stack whose description names this solution and carries the anonymous tracking code in parentheses, followed by a `(tag:core)` suffix | Your AWS account, created by your own credentials (`infra-terraform/metrics.tf`) | Counting deployments. The description is the only field this solution adds for the counter; like any stack, the count is tied to the account, Region and stack name, and to when the stack was created and deleted |
+| The deployment marker stack, `<env>-<project>-deployment-metrics`: a CloudFormation stack whose description names this solution and carries the anonymous tracking code in parentheses, followed by a `(tag:core)` suffix and the solution version, for example `(v2026.10.0)` | Your AWS account, created by your own credentials (`infra-terraform/metrics.tf`) | Counting deployments by release. The description is the only field this solution adds for the counter; like any stack, the count is tied to the account, Region and stack name, and to when the stack was created and deleted |
 | The stack's one resource: an SSM Standard parameter, `/<env>-<project>/deployment-metrics/tracking-code`, whose value is the same code | Your AWS account, inside the marker stack | Nothing. CloudFormation requires a template to declare at least one resource, so this is the marker; nothing in the solution reads it back, and you can read it yourself to check the disclosure |
 | The `TrackingId` tag, carrying the same code | Every taggable resource the deployment creates, set in `common_tags` (`infra-terraform/locals.tf`) and applied as the provider's `default_tags` (`infra-terraform/main.tf`) | Nothing. The tag is not an ingestion path and is not collected |
 | Not collected | — | Usage data, message content, conversation data or customer data. Nothing beyond what AWS already sees in its own CloudFormation control plane for any stack your credentials create |

@@ -54,6 +54,47 @@ pattern = "^(?P<version>\\S+)$"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/socialagent"]
+# infra-terraform/ is the stack's Terraform, which the CLI materializes into a
+# project's .socialagent/infra/ when there is no checkout to run it from
+# (socialagent/cli/_infra.py). It is an only-include with a source rewrite
+# rather than a force-include for two reasons. A force-include walks the whole
+# directory and ignores `exclude`, so a contributor's .terraform/ (provider
+# binaries), state and tfvars would ship. And a force-include whose source is
+# missing aborts the build, while the Lambda layer and template-sync archives
+# (packaging.tf, modules/templates) run `pip install .` on a tree without
+# infra-terraform/; an only-include that is absent adds nothing.
+only-include = ["src/socialagent", "infra-terraform"]
+sources = { "infra-terraform" = "socialagent/cli/_assets/infra-terraform" }
+# What Terraform writes into its own directories (state, lock file, build
+# archives), deployment inputs that name an account (tfvars, backend configs,
+# envs/), stray credentials and logs, and the mocked plan tests, which run only
+# from a checkout. The root .gitignore already drops most of these; listed here
+# so the wheel does not depend on it. Keep in step with _infra.EXCLUDED_DIRS,
+# EXCLUDED_TOP_DIRS and EXCLUDED_FILES (tests/test_cli_infra.py checks).
+exclude = [
+    "/infra-terraform/**/.terraform/",
+    "/infra-terraform/**/.build/",
+    "/infra-terraform/**/terraform.tfstate.d/",
+    "/infra-terraform/envs/",
+    "/infra-terraform/tftest/",
+    "/infra-terraform/**/*.tfstate",
+    "/infra-terraform/**/*.tfstate.*",
+    "/infra-terraform/**/*.tfvars",
+    "/infra-terraform/**/*.tfvars.json",
+    "/infra-terraform/**/.terraform.lock.hcl",
+    "/infra-terraform/**/backend-*.hcl",
+    "/infra-terraform/**/*.zip",
+    "/infra-terraform/**/.env",
+    "/infra-terraform/**/.env.*",
+    "/infra-terraform/**/*.pem",
+    "/infra-terraform/**/*.key",
+    "/infra-terraform/**/*.log",
+    "/infra-terraform/**/*.swp",
+]
+# Editable installs (`uv sync`) put src/ on the path, as `packages` did. Without
+# this, hatch's detection maps every .py it includes, and the source rewrite of
+# infra-terraform/modules/event-api/authorizer.py is one it refuses.
+dev-mode-dirs = ["src"]
 
 # blueprints/, recipes/ and packages/socialagent-runtime/ are template-as-code that the
 # CLI copies into new projects. They live at the repo root, so without this the

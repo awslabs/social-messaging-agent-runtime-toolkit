@@ -14,9 +14,11 @@ on:
 permissions:
   contents: read
 
+# As in ci.yml: a pull request's new push cancels its previous run, and runs
+# on main, the weekly schedule's included, are never cancelled.
 concurrency:
-  group: security-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   ash:

@@ -448,19 +448,53 @@ def test_config_show_and_sync_on_missing_env(ws, env):
     assert "config init --env prod" in sync.stdout
 
 
-def test_config_sync_without_terraform_dir(ws, env):
+def _failing_terraform(tmp: Path, env: dict[str, str]) -> dict[str, str]:
+    """*env* with a `terraform` first on PATH that fails every call."""
+    bin_dir = tmp / "fake-bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "terraform"
+    fake.write_text("#!/bin/sh\necho 'fake terraform: no backend' >&2\nexit 1\n")
+    fake.chmod(0o755)
+    return {**env, "PATH": f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"}
+
+
+def test_config_sync_outside_a_checkout_uses_the_managed_copy(ws, env, tmp_path):
+    # No checkout above the project: sync runs the CLI's own Terraform, copied
+    # into the project, and the failure is Terraform's, not a missing root.
     project = _scaffold(ws, env, "minimal")
-    r = run("config", "sync", cwd=project, env=env)
+    r = run("config", "sync", cwd=project, env=_failing_terraform(tmp_path, env))
     assert r.returncode == 1
-    assert "--tf-dir" in r.stderr
+    assert "ERROR: could not sync outputs" in r.stderr
+    copies = list((project / ".socialagent" / "infra").glob("*/main.tf"))
+    assert len(copies) == 1, copies
+    assert "managed by socialagent: edits there are overwritten" in r.stderr
 
 
-def test_config_sync_fails_loudly_when_terraform_fails(ws, env):
-    # A failed Terraform call is exit 1 with the reason.
+def test_config_sync_with_a_tf_dir_that_is_not_terraform(ws, env):
     project = _scaffold(ws, env, "minimal")
     r = run("config", "sync", "--tf-dir", str(ws / "nope"), cwd=project, env=env)
     assert r.returncode == 1
+    assert "no main.tf there" in r.stderr
+    assert "Traceback" not in r.stderr
+
+
+def test_config_sync_fails_loudly_when_terraform_fails(ws, env, tmp_path):
+    # A failed Terraform call is exit 1 with the reason.
+    project = _scaffold(ws, env, "minimal")
+    tf = ws / "tf"
+    tf.mkdir()
+    (tf / "main.tf").write_text("# fixture\n")
+    r = run(
+        "config",
+        "sync",
+        "--tf-dir",
+        str(tf),
+        cwd=project,
+        env=_failing_terraform(tmp_path, env),
+    )
+    assert r.returncode == 1
     assert "ERROR: could not sync outputs" in r.stderr
+    assert "fake terraform: no backend" in r.stderr
     assert "Traceback" not in r.stderr
 
 

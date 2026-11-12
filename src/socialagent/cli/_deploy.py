@@ -16,6 +16,9 @@ needs is derived from ``socialagent.<env>.yaml``:
   (default ``socialagent``, bootstrap's default), ``stage`` is ``state.stage``
   (default: the environment) and ``account`` comes from STS.
 - **Workspace** — ``state.workspace``, default ``<project>-<environment>``.
+- **Root** — ``_infra.find_tf_dir``: ``--tf-dir``, else the checkout's
+  ``infra-terraform/``, else the copy of the CLI's own Terraform in
+  ``.socialagent/infra/``.
 
 Terraform is run through ``_runner`` (live output, fail loudly). Each stack
 gets its own Terraform data dir (``.socialagent/terraform/<workspace>``), so
@@ -39,12 +42,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from socialagent.cli import _schema, _tfvars
+from socialagent.cli import _infra, _schema, _tfvars
 from socialagent.cli._assets import socialagent_runtime_dir
 from socialagent.cli._errors import CliError
 from socialagent.cli._project import project_root
 from socialagent.cli.runtime_cmd import warn_if_stale
-from socialagent.cli._runner import Runner, run
+from socialagent.cli._runner import Runner, require_on_path, run
 from socialagent.cli.config_file import (
     check_environment,
     file_schema_version,
@@ -97,27 +100,6 @@ def data_dir(project_dir: Path, workspace: str) -> Path:
     return project_dir / ".socialagent" / "terraform" / workspace
 
 
-def find_tf_dir(start: Path, override: str = "") -> Path:
-    """``--tf-dir`` if given, else the nearest ``infra-terraform/`` upward."""
-    if override:
-        tf = Path(override).resolve()
-    else:
-        tf = next(
-            (
-                p / "infra-terraform"
-                for p in (start.resolve(), *start.resolve().parents)
-                if (p / "infra-terraform" / "main.tf").is_file()
-            ),
-            None,
-        )
-    if tf is None or not (tf / "main.tf").is_file():
-        raise CliError(
-            "could not find infra-terraform/ — run from inside the SMART "
-            "checkout, or pass --tf-dir"
-        )
-    return tf
-
-
 def account_id(region: str) -> str:
     """The AWS account the caller's credentials resolve to."""
     import boto3  # noqa: PLC0415
@@ -152,7 +134,7 @@ def resolve(env_name: str, tf_dir: str = "", account: str | None = None) -> Stac
         )
     config = load(cfg_path)
     check_environment(config, env_name, cfg_path)
-    tf = find_tf_dir(project_dir, tf_dir)
+    tf = _infra.find_tf_dir(project_dir, tf_dir)
     workspace = (
         _schema.get(config, "state.workspace")
         or f"{config['project']}-{config['environment']}"
@@ -861,7 +843,11 @@ def notice_deployment_metrics(stack: Stack) -> None:
 
 def deploy(args: Any, runner: Runner = run, account: str | None = None) -> None:
     """``socialagent deploy [--env] [--plan] [--yes] [--accept-data-loss] [--skip-model-check] [--tf-dir]``."""
+    # A fake runner (the tests') runs nothing, so only the real one needs them.
+    if runner is run:
+        require_on_path("deploy", "terraform", *(() if args.plan else ("aws",)))
     stack = resolve(args.env, args.tf_dir, account)
+    _infra.check_deployable(stack.tf_dir, stack.project_dir, "deploy")
     _check_no_auto_loaded_tfvars(stack)
     warn_if_stale(stack.project_dir)
     warn_if_schedule_handlers_without_lambda(stack.config, stack.project_dir)
@@ -942,7 +928,10 @@ def deploy(args: Any, runner: Runner = run, account: str | None = None) -> None:
 
 def destroy(args: Any, runner: Runner = run, account: str | None = None) -> None:
     """``socialagent destroy [--env] [--yes] [--tf-dir]``."""
+    if runner is run:
+        require_on_path("destroy", "terraform")
     stack = resolve(args.env, args.tf_dir, account)
+    _infra.check_deployable(stack.tf_dir, stack.project_dir, "destroy")
     _check_no_auto_loaded_tfvars(stack)
     _require_approval_source(args.yes, "destroy")
     _header(stack, "Destroying")
@@ -1051,6 +1040,9 @@ def bootstrap(
             f"({b['bucket']} / {b['dynamodb_table']}). Fix it by hand rather than "
             "letting bootstrap create one half next to unmanaged resources."
         )
+    # Checked here, not first: a backend that exists needs no Terraform at all.
+    if runner is run:
+        require_on_path("bootstrap", "terraform")
     _require_approval_source(args.yes, "bootstrap")
 
     prefix = _schema.get(stack.config, "state.prefix") or DEFAULT_STATE_PREFIX
@@ -1089,6 +1081,8 @@ def status(args: Any, runner: Runner = run, account: str | None = None) -> None:
     ``--refresh`` re-reads them from Terraform first.
     """
     if args.refresh:
+        if runner is run:
+            require_on_path("status --refresh", "terraform")
         stack = resolve(args.env, args.tf_dir, account)
         _init(stack, runner)
         config = populate_outputs(

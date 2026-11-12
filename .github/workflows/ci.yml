@@ -12,10 +12,14 @@ on:
 permissions:
   contents: read
 
-# A new push supersedes the previous run for the same ref.
+# A new push to a pull request cancels its previous run. On main nothing is
+# cancelled: a merge's run waits for the one before it, so each merge reports
+# a result and the README badge never shows a cancelled run as failing.
+# Runs share the enterprise's GitHub-hosted runner pool, so main's runs are
+# queued one at a time rather than started side by side.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # git and grep are the whole requirement, so this gate reports in seconds
