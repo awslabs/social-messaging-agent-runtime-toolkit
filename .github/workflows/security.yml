@@ -14,8 +14,10 @@ on:
 permissions:
   contents: read
 
+# As in ci.yml: a pull request's new push cancels its previous run; runs on
+# main, the weekly schedule's included, each get a group of their own.
 concurrency:
-  group: security-${{ github.ref }}
+  group: security-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:
