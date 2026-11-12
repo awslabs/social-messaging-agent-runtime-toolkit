@@ -810,12 +810,15 @@ def _stack_status(config: dict) -> dict:
     except Exception:
         runtime_status = "error"
 
-    # Last deploy from CodeBuild
+    # Last deploy from CodeBuild, read the way the Deploys tab reads it: the
+    # client and the project are the stack's, not the console's, so a stack in
+    # another Region, or a zip stack, is not read as never deployed (#62).
     last_deploy = ""
     try:
-        builds = codebuild.list_builds_for_project(projectName=f"{prefix}-agent-build", sortOrder="DESCENDING")
+        builder, project_name = _deploys_builder(config, prefix)
+        builds = builder.list_builds_for_project(projectName=project_name, sortOrder="DESCENDING")
         if builds.get("ids"):
-            build_info = codebuild.batch_get_builds(ids=[builds["ids"][0]])
+            build_info = builder.batch_get_builds(ids=[builds["ids"][0]])
             last_deploy = str(build_info["builds"][0].get("endTime", ""))
     except Exception:
         logger.exception("handler_error")
