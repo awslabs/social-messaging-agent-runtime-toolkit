@@ -78,7 +78,7 @@ markers = [
 dev = [
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
-    "ruff>=0.15.7",
+    "ruff>=0.17.4",
     # Real DynamoDB conditional-expression semantics. A hand-rolled stub would
     # assert against our own model of DynamoDB, which is worthless for bugs that
     # live in the conditional expressions themselves. The console backend already
