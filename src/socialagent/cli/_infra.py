@@ -13,7 +13,7 @@ order:
    with ``pyproject.toml`` and ``src/socialagent/`` beside it), which is what
    contributors and ``make tf-*`` run.
 3. The managed copy: the Terraform this CLI ships (``_assets.terraform_dir``),
-   copied into ``<project>/.socialagent/infra/<cli version>/``.
+   copied into ``<project>/.socialagent/infra/``.
 
 The managed copy exists because Terraform writes into the root it runs:
 build archives under ``${path.root}/.terraform/`` and
@@ -22,9 +22,12 @@ root's local state under ``bootstrap/terraform.tfstate.d/``. A shared or
 read-only ``site-packages`` cannot take those writes, and two projects must
 not share them. The copy carries a marker with the hash of what was copied,
 and is refreshed whenever its content no longer hashes to the CLI's, so it
-is CLI-owned: edits there are overwritten. Terraform's local state is kept
-where it is through every refresh. Copies made by other CLI versions are left
-where they are, because their bootstrap state, if any, lives in them.
+is CLI-owned: edits there are overwritten. There is one copy per project,
+not one per CLI version, and Terraform's local state is kept where it is
+through every refresh, so bootstrap's state survives a CLI upgrade or
+downgrade. A refresh deletes files, so it refuses to run through a symlink:
+``.socialagent/`` or ``.socialagent/infra/`` pointing elsewhere would have it
+empty the directory they point to.
 
 A root with no checkout above it builds the Lambda layer and the template
 sync from the published package instead of the SDK source (package mode in
@@ -86,7 +89,7 @@ _STATE_FILES = ("terraform.tfstate", "terraform.tfstate.backup")
 
 
 def managed_root(project_dir: Path) -> Path:
-    """Where every version's managed copy lives: ``.socialagent/infra/``."""
+    """Where the project's managed copy lives: ``.socialagent/infra/``."""
     return project_dir / ".socialagent" / "infra"
 
 
@@ -154,11 +157,11 @@ def materialize(
 ) -> Path:
     """Return the project's managed copy of *source*, (re)creating it if needed.
 
-    *source* defaults to the Terraform this CLI ships and *version* to the
-    CLI's version. A copy whose marker and content both hash to *source* is
-    used as it is; any other (missing, partial, edited, or from a different
-    build of the same version) is refreshed in place, keeping Terraform's
-    local state where it is.
+    *source* defaults to the Terraform this CLI ships and *version*, which
+    the marker records, to the CLI's version. A copy whose marker and content
+    both hash to *source* is used as it is; any other (missing, partial,
+    edited, or from another CLI version or build) is refreshed in place,
+    keeping Terraform's local state where it is.
     """
     source = (source or terraform_dir()).resolve()
     if not (source / "main.tf").is_file():
@@ -167,15 +170,15 @@ def materialize(
             "checkout, or pass --tf-dir"
         )
     version = version or _cli_version()
-    root = managed_root(project_dir)
-    dest = root / version
+    dest = managed_root(project_dir)
+    _refuse_symlinks(project_dir, dest)
     digest = tree_hash(source)
     if _marker_hash(dest) == digest and tree_hash(dest) == digest:
         return dest
 
     _tfvars.work_dir(project_dir)
-    root.mkdir(exist_ok=True)
-    replacing = dest.is_dir()
+    dest.mkdir(exist_ok=True)
+    replacing = any(dest.iterdir())
     # In place rather than built beside and swapped in: the state is the one
     # thing here that cannot be rebuilt, and a refresh that never moves it
     # cannot lose it, wherever it is interrupted. The marker goes first and
@@ -199,6 +202,22 @@ def materialize(
         file=sys.stderr,
     )
     return dest
+
+
+def _refuse_symlinks(project_dir: Path, dest: Path) -> None:
+    """Refuse a managed copy reached through a symlink below the project.
+
+    A refresh deletes everything in the copy but Terraform's state, so a
+    symlinked ``.socialagent/`` or ``.socialagent/infra/`` would have it empty
+    whatever directory the link points to.
+    """
+    for path in (project_dir / ".socialagent", dest):
+        if path.is_symlink():
+            raise CliError(
+                f"{path} is a symlink; the Terraform copy the CLI manages there "
+                "is refreshed by deleting files, so it must be a real directory. "
+                "Remove the link, or pass --tf-dir to run Terraform you own."
+            )
 
 
 def _clear_all_but_state(root: Path) -> None:

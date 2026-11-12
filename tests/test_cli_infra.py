@@ -81,7 +81,7 @@ def project(tmp_path, monkeypatch) -> Path:
 
 
 def _copy(project: Path) -> Path:
-    return project / ".socialagent" / "infra" / VERSION
+    return project / ".socialagent" / "infra"
 
 
 def _snapshot(root: Path) -> dict[str, bytes]:
@@ -297,7 +297,7 @@ def test_copy_is_replaced_when_the_cli_terraform_changes(packaged, project, caps
     assert not (tf / ".terraform").exists()
     assert not (tf / ".terraform.lock.hcl").exists()
     assert "refreshed" in capsys.readouterr().err
-    assert [p.name for p in (project / ".socialagent" / "infra").iterdir()] == [VERSION]
+    assert tf == _copy(project)
 
 
 @pytest.mark.parametrize("fails", ["rmtree", "unlink", "copy2", "marker"])
@@ -358,7 +358,7 @@ def test_an_interrupted_refresh_never_loses_bootstrap_state(
     assert not (tf / ".terraform").exists()
     assert (state / "terraform.tfstate").read_text() == '{"serial": 7}'
     assert (tf / "terraform.tfstate").read_text() == '{"serial": 3}'
-    assert [p.name for p in (project / ".socialagent" / "infra").iterdir()] == [VERSION]
+    assert tf == _copy(project)
 
 
 def test_edits_to_the_copy_are_overwritten(packaged, project):
@@ -371,14 +371,47 @@ def test_edits_to_the_copy_are_overwritten(packaged, project):
     assert not (tf / "extra.tf").exists()
 
 
-def test_other_versions_copies_are_left_alone(packaged, project, monkeypatch):
-    # An older CLI's copy may hold bootstrap's local state, so it is kept.
+def test_a_cli_upgrade_refreshes_the_same_copy_and_keeps_bootstrap_state(
+    packaged, project
+):
+    # One copy per project, not per CLI version: bootstrap's local state is the
+    # only record of the backend, so an upgrade must find it where it was.
     older = _infra.materialize(project, version="2026.10.0")
-    (older / "bootstrap" / "terraform.tfstate.d").mkdir()
-    before = _snapshot(older)
+    state = older / "bootstrap" / "terraform.tfstate.d" / "socialagent-dev"
+    state.mkdir(parents=True)
+    (state / "terraform.tfstate").write_text('{"serial": 7}')
+    (packaged / "main.tf").write_text("# root, next release\n")
 
-    assert _infra.materialize(project) == _copy(project)
-    assert _snapshot(older) == before
+    newer = _infra.materialize(project)
+    assert newer == older == _copy(project)
+    assert (newer / "main.tf").read_text() == "# root, next release\n"
+    assert (state / "terraform.tfstate").read_text() == '{"serial": 7}'
+    assert json.loads((newer / _infra.MARKER).read_text())["version"] == VERSION
+    assert sorted(p.name for p in newer.iterdir() if p.is_dir()) == [
+        "bootstrap",
+        "modules",
+    ]
+
+
+@pytest.mark.parametrize("link", [".socialagent", ".socialagent/infra"])
+def test_a_symlinked_copy_is_refused_and_its_target_left_alone(
+    packaged, project, tmp_path, link
+):
+    # A refresh deletes files, so following a link would empty its target.
+    target = tmp_path / "elsewhere"
+    (target / "infra").mkdir(parents=True)
+    (target / "keep.txt").write_text("mine")
+    (target / "infra" / "keep.txt").write_text("mine")
+    if link == ".socialagent":
+        (project / ".socialagent").symlink_to(target)
+    else:
+        (project / ".socialagent").mkdir()
+        (project / ".socialagent" / "infra").symlink_to(target)
+    before = _snapshot(target)
+
+    with pytest.raises(CliError, match="symlink"):
+        _infra.materialize(project)
+    assert _snapshot(target) == before
 
 
 def test_the_packaged_terraform_is_never_written(packaged, project):

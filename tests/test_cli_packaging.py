@@ -601,7 +601,7 @@ def test_pip_installed_cli_runs_its_own_terraform(installed_cli: Path, tmp_path:
     assert resolved.returncode == 0, resolved.stdout + resolved.stderr
     lines = resolved.stdout.splitlines()
     copy = Path(lines[0])
-    assert copy.parent == project / ".socialagent" / "infra"
+    assert copy == project / ".socialagent" / "infra"
     assert (copy / "main.tf").is_file() and (copy / "bootstrap" / "main.tf").is_file()
     assert not (copy.parent / "pyproject.toml").exists()
     assert "edits there are overwritten" in resolved.stderr

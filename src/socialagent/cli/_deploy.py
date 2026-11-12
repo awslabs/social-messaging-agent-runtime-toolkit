@@ -18,7 +18,7 @@ needs is derived from ``socialagent.<env>.yaml``:
 - **Workspace** — ``state.workspace``, default ``<project>-<environment>``.
 - **Root** — ``_infra.find_tf_dir``: ``--tf-dir``, else the checkout's
   ``infra-terraform/``, else the copy of the CLI's own Terraform in
-  ``.socialagent/infra/<version>/``.
+  ``.socialagent/infra/``.
 
 Terraform is run through ``_runner`` (live output, fail loudly). Each stack
 gets its own Terraform data dir (``.socialagent/terraform/<workspace>``), so

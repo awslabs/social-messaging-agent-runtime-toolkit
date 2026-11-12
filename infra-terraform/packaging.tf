@@ -18,7 +18,7 @@
 #     CodeBuild runs `pip install .` on it, so a contributor's uncommitted
 #     change reaches the layer.
 #   - Package mode: no checkout above the root, as in the copy a
-#     pip-installed CLI writes to <project>/.socialagent/infra/<version>/, or
+#     pip-installed CLI writes to <project>/.socialagent/infra/, or
 #     a checkout with sdk_package_spec or sdk_wheel_path set. CodeBuild
 #     installs the published package (var.sdk_package_spec) from the package
 #     index, or a wheel the deployer supplies (var.sdk_wheel_path), and
