@@ -12,13 +12,14 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request supersedes its previous run. Every other run
-# (pushes to main) gets a group of its own, so a merge never cancels the run of
-# the merge before it, and the README badge, which shows the latest finished
-# run on main, never reads a cancelled run as failing.
+# A new push to a pull request cancels its previous run. On main nothing is
+# cancelled: a merge's run waits for the one before it, so each merge reports
+# a result and the README badge never shows a cancelled run as failing.
+# Runs share the enterprise's GitHub-hosted runner pool, so main's runs are
+# queued one at a time rather than started side by side.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # git and grep are the whole requirement, so this gate reports in seconds
