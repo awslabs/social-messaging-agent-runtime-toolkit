@@ -948,7 +948,7 @@ Social Messaging Agent Runtime Toolkit (SMART) is a Python SDK/framework that co
 
 **Description**: Anonymous deployment metrics are read by AWS from its own CloudFormation control plane; beyond the deployer's own CloudFormation calls that create and update the marker stack, the deploying account initiates no egress for them. The only ingestion path is the stack description, which AWS already sees for every CloudFormation stack, so the marker adds a value to a field AWS reads rather than a channel out of the account.
 
-- **Impact**: Nothing in this repository reads the parameter back, and ingestion cannot be confirmed from the deploying account, so conformance to the documented description format, which ends with the parenthesised tracking code and the `(tag:core)` suffix, is the only assurance.
+- **Impact**: Nothing in this repository reads the parameter back, and ingestion cannot be confirmed from the deploying account, so conformance to the documented description format, which ends with the parenthesised tracking code, the `(tag:core)` suffix and the parenthesised solution version (for example `(v2026.10.0)`), is the only assurance.
 - **Rationale**: The flag defaults to `true` because ingestion is only via the stack description: adopters who deployed before the marker existed are not counted unless they redeploy or update to a release that includes it, so it ships enabled from the first public release rather than being added later.
 
 ### A018: Accepted Risk (deployment-metrics marker tampering)

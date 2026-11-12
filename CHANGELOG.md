@@ -4,12 +4,21 @@ All notable changes to SMART, the Social Messaging Agent Runtime Toolkit, are re
 
 ## [Unreleased]
 
+### WhatsApp channel
+- Outbound reactions: `messages.reaction(message_id, emoji)` queues an emoji on a user message through the in-band notify path (empty emoji removes a reaction). Existing projects pick this up with `socialagent runtime update`.
+
+### Changed
+- The deployment marker's description ends with the solution version, `(vX.Y.Z)`, so the anonymous deployment count can be broken down by release (#105).
+
 ### Fixed
 - CLI output, including the anonymous deployment counter notice, stays ahead of Terraform output when redirected to a file or pipe.
 - `personal-assistant` now passes `transcribe_languages` to the transcription call in its `on_media` hook, so the setting applies to its voice notes as it does to the default path. `handlers/` is project code, so an existing project adds `language_options=config.transcribe_languages,` to the `transcribe_audio` call in `handlers/webhook.py` by hand. The blueprint's YAML sets `transcribe_languages: [es-MX, en-US]`, which had no effect on its voice notes before this fix, so check that the list names your users' languages before you deploy the change.
 - The zip-mode agent archive leaves out the project's `infrastructure/` directory, like the Docker-mode archive. A zip-mode project with that directory gets a new archive hash, so its next deploy rebuilds the package once.
+- An upgraded stack now takes the new marker description: the marker parameter's description carries the version, so each release is a resource change CloudFormation applies, instead of a description-only change it ignores and Terraform plans again on every deploy (#68).
+- `socialagent templates validate` exits 0 with a message in a project with no `templates.yaml` and no templates path configured, such as one from the `minimal` blueprint, instead of failing. A configured path that is missing, a `templates.yaml` that is a directory or a broken symlink, and a run outside any project are still errors (#83).
 
 ### Admin console
+- The State tab and the global State page no longer list or count the scheduler's `_schedule#` firing records as user state; Nuclear reset leaves them in place, as they expire on their own.
 - "Delete selected" on the State tab and the global State page asks for confirmation, naming how many keys, users and stacks it will delete and warning that the deletion cannot be undone; one click no longer deletes.
 - The conversation viewer's "Delete conversation" asks for confirmation inside the viewer, naming the conversation and warning that the deletion cannot be undone, before it deletes the conversation's AgentCore Memory events; one click no longer deletes.
 - The Stack Detail Deploys tab reports a failed CodeBuild read instead of showing an empty history, reads each stack's builds in the stack's own region, and reads a zip stack's builds from `<prefix>-agent-zip-build`.

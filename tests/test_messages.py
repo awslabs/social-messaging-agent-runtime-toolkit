@@ -13,6 +13,7 @@ from socialagent.messages import (
     image,
     list_menu,
     location,
+    reaction,
     text,
     video,
 )
@@ -222,3 +223,20 @@ def test_list_menu_duplicate_row_id_across_sections_rejected() -> None:
 def test_buttons_duplicate_labels_rejected() -> None:
     with pytest.raises(ValueError, match="unique"):
         buttons("body", ["Yes", "No", "Yes"])
+
+
+def test_reaction() -> None:
+    msg = reaction("wamid.HBgNexample", "👍")
+    assert msg.type == "reaction"
+    assert msg.payload["reaction"]["message_id"] == "wamid.HBgNexample"
+    assert msg.payload["reaction"]["emoji"] == "👍"
+
+
+def test_reaction_empty_emoji_is_included() -> None:
+    msg = reaction("wamid.1", "")
+    assert msg.payload["reaction"] == {"message_id": "wamid.1", "emoji": ""}
+
+
+def test_reaction_empty_message_id_rejected() -> None:
+    with pytest.raises(ValueError, match="message_id"):
+        reaction("", "👍")

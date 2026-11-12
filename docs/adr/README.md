@@ -38,6 +38,7 @@ To change an accepted decision, open a new record that supersedes it rather than
 | [0008](0008-pypi-distribution-name.md) | Distribution name on PyPI | Accepted |
 | [0009](0009-direct-sends-and-delivery-records.md) | Tools send when called; the toolkit records every message it delivers | Proposed |
 | [0010](0010-whatsapp-only-through-eum-social.md) | WhatsApp is reached only through AWS End User Messaging Social | Accepted |
+| [0012](0012-lifecycle-from-the-package.md) | The package carries the stack's Terraform, so a pip install covers the whole lifecycle | Proposed |
 
 ## Format
 
