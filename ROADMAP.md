@@ -169,7 +169,7 @@ What a public repo needs so that strangers can use it, contribute to it, and tru
 | **`VERSION` file** as the single source of truth, read by `pyproject.toml`, `--version`, the runtime stamp label and the release workflow | 2026.10 | 🟢 |  | |  |
 | **`CONTRIBUTORS.md`**: the four authors, by name; the public history starts at one commit, so the file records what the graph cannot | 2026.10 | 🟢 |  |  | Later contributors appear in the repository graph |
 | Issue forms (bug with `socialagent runtime status` output, feature, question) and a PR template | 2026.10 | 🟢 |  |  | In the CI-hardening change |
-| **`CODEOWNERS`** so reviews route automatically | 2026.10 | 🟢 |  |  | Toolkit, console, infra, docs. Neither reference repo has one; each area has one owner for routing and everything else names the four maintainers; `main` requires one approval from a maintainer other than the author, and CONTRIBUTING says when a second review is required |
+| **`CODEOWNERS`** so reviews route automatically | 2026.10 | 🟢 |  |  | Toolkit, console, infra, docs. Neither reference repo has one; every path is owned by the four maintainers' GitHub logins, and the console keeps its own line so it can get its own reviewers later |
 | Dependabot with cooldowns on every ecosystem (pip, npm, GitHub Actions, Terraform) | 2026.10 | ✅ |  |  | — |
 | **Dependabot auto-merge** for patch and minor updates once CI is green | 2026.11 | ⬜ | branch protection |  | Auto-merge only what CI proves |
 | **ASH as a scheduled full-repository scan** in addition to per-PR, with findings posted as a PR comment | 2026.11 | ⬜ | 4.2 CI hardening |  | PR scan, scheduled full scan, and a `workflow_run` commenter that is safe for forks; `security.yml` is per-PR only today |
