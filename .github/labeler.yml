@@ -7,11 +7,22 @@
 # included. tests/test_pr_labels.py fails when a top-level directory has no
 # "<dir>/**" glob here, so a new one needs a line.
 #
-# Markdown is documentation wherever it lives, so a pull request that changes
-# only infra-terraform/README.md is docs-only, not infra: the other labels
-# match a file only when it is not Markdown (all-globs-to-any-file with
-# "!**/*.md": one file must match both). A skill is the exception. It is
-# Markdown, but it is the agent's instructions, so it counts as runtime.
+# A label sets how closely a reviewer looks, so docs-only is only for Markdown
+# that nothing ships, runs or relies on. The other labels match a file only
+# when it is not Markdown (all-globs-to-any-file with "!**/*.md": one file must
+# match both), so a pull request that changes only infra-terraform/README.md is
+# docs-only, not infra. The exceptions are the Markdown that instructs an agent,
+# ships, or carries the security posture, listed in both places below so that
+# each lands on exactly one label:
+#   - runtime: skills, which are the agent's instructions; the AGENTS.md,
+#     CLAUDE.md and SOCIALAGENT_GUIDE.md that `socialagent init` and
+#     `socialagent recipe add` copy into projects, where they instruct coding
+#     agents; and PYPI.md, the published PyPI page.
+#   - console: the admin console's AGENTS.md and CLAUDE.md.
+#   - ci: every other AGENTS.md and CLAUDE.md, which instruct the coding agents
+#     that work on this repository (CONTRIBUTING.md has reviewers read them
+#     first), and the security policy, the threat model and the data flows,
+#     reviewed with the CI and release machinery that enforces them.
 
 docs-only:
   - all:
@@ -23,6 +34,10 @@ docs-only:
           - all-globs-to-all-files:
               - "!recipes/*/skill.md"
               - "!blueprints/*/src/skills/**"
+              - "!**/{AGENTS,CLAUDE}.md"
+              - "!blueprints/*/SOCIALAGENT_GUIDE.md"
+              - "!PYPI.md"
+              - "!{SECURITY.md,docs/threat-model.*,docs/data-flows.md}"
 
 infra:
   - changed-files:
@@ -38,13 +53,21 @@ runtime:
       - any-glob-to-any-file:
           - "recipes/*/skill.md"
           - "blueprints/*/src/skills/**"
+          - "{blueprints,recipes}/**/{AGENTS,CLAUDE}.md"
+          - "blueprints/*/SOCIALAGENT_GUIDE.md"
+          - "PYPI.md"
 
 console:
   - changed-files:
       - all-globs-to-any-file: ["socialagent-admin-console/**", "!**/*.md"]
+      - any-glob-to-any-file: "socialagent-admin-console/**/{AGENTS,CLAUDE}.md"
 
 ci:
   - changed-files:
       - all-globs-to-any-file:
           - "{.github/**,scripts/**,Makefile,.ash.yaml,.gitignore}"
           - "!**/*.md"
+      - any-glob-to-any-file: "{SECURITY.md,docs/threat-model.*,docs/data-flows.md}"
+      - all-globs-to-any-file:
+          - "**/{AGENTS,CLAUDE}.md"
+          - "!{blueprints,recipes,socialagent-admin-console}/**"

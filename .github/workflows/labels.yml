@@ -13,7 +13,7 @@ name: Labels
 # safe only while no step checks out, builds or runs the pull request's code.
 # The labeler reads the list of changed files and its configuration through the
 # API, from the base branch, and runs nothing else. tests/test_pr_labels.py pins
-# the trigger, the permissions and the absence of a checkout or a run step.
+# this whole file, so a change here has to change the test too.
 #
 # zizmor reports every pull_request_target as dangerous-triggers. The ignore
 # is for this workflow only, and is sound only while tests/test_pr_labels.py
@@ -35,9 +35,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # No issues: write, so the labeler cannot create a label: the five labels
-  # exist in the repository, and a sixth needs creating before labeler.yml
-  # names it.
+  # No issues: write, so the labeler cannot create a label: each label in
+  # labeler.yml must exist in the repository before this workflow runs with it,
+  # or the run fails.
   label:
     name: label
     runs-on: ubuntu-latest
