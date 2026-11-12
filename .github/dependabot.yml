@@ -97,6 +97,20 @@ updates:
       ui-minor-patch:
         update-types: [minor, patch]
 
+  # The documentation site (site/). Its dependencies are pinned exactly, so every
+  # bump arrives as a PR; build the site before merging.
+  - package-ecosystem: npm
+    directory: /site
+    versioning-strategy: increase-if-necessary
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+    groups:
+      site-minor-patch:
+        update-types: [minor, patch]
+
   - package-ecosystem: terraform
     directories:
       - /infra-terraform

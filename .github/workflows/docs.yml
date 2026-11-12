@@ -1,0 +1,46 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Builds the documentation site (site/, Astro Starlight over docs/) on every
+# pull request that touches it. The build fails on a broken internal link or
+# anchor (starlight-links-validator).
+name: Docs
+
+on:
+  pull_request:
+    paths:
+      - "docs/**"
+      - "site/**"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build site
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - name: install
+        working-directory: site
+        run: npm ci
+      - name: test the content generator
+        working-directory: site
+        run: npm test
+      - name: build (fails on broken links)
+        working-directory: site
+        run: npm run build
