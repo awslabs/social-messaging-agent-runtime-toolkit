@@ -842,12 +842,14 @@ def notice_deployment_metrics(stack: Stack) -> None:
 
 
 def deploy(args: Any, runner: Runner = run, account: str | None = None) -> None:
-    """``socialagent deploy [--env] [--plan] [--yes] [--accept-data-loss] [--skip-model-check] [--tf-dir]``."""
+    """``socialagent deploy [--env] [--plan] [--yes] [--accept-data-loss] [--skip-model-check] [--sdk-wheel] [--tf-dir]``."""
     # A fake runner (the tests') runs nothing, so only the real one needs them.
     if runner is run:
         require_on_path("deploy", "terraform", *(() if args.plan else ("aws",)))
     stack = resolve(args.env, args.tf_dir, account)
-    _infra.check_deployable(stack.tf_dir, stack.project_dir, "deploy")
+    sdk = _infra.sdk_tfvars(
+        stack.tf_dir, getattr(args, "sdk_wheel", None), project_dir=stack.project_dir
+    )
     _check_no_auto_loaded_tfvars(stack)
     warn_if_stale(stack.project_dir)
     warn_if_schedule_handlers_without_lambda(stack.config, stack.project_dir)
@@ -863,8 +865,11 @@ def deploy(args: Any, runner: Runner = run, account: str | None = None) -> None:
     _header(stack, "Planning" if args.plan else "Deploying")
     notice_deployment_metrics(stack)
 
-    var_file = _tfvars.write(stack.config, stack.project_dir, stack.tf_dir)
+    var_file = _tfvars.write(stack.config, stack.project_dir, stack.tf_dir, sdk)
     print(f"Variables: {var_file}")
+    installs = _infra.describe_sdk(json.loads(var_file.read_text()))
+    if installs:
+        print(installs)
     _init(stack, runner)
     runner(
         _tf(stack, "workspace", "select", "-or-create", stack.workspace),
@@ -931,12 +936,14 @@ def destroy(args: Any, runner: Runner = run, account: str | None = None) -> None
     if runner is run:
         require_on_path("destroy", "terraform")
     stack = resolve(args.env, args.tf_dir, account)
-    _infra.check_deployable(stack.tf_dir, stack.project_dir, "destroy")
     _check_no_auto_loaded_tfvars(stack)
     _require_approval_source(args.yes, "destroy")
     _header(stack, "Destroying")
 
-    var_file = _tfvars.write(stack.config, stack.project_dir, stack.tf_dir)
+    # A destroy plans too, and a root with no checkout above it needs a spec to
+    # plan; a wheel a deploy used is not needed, as nothing is built.
+    sdk = _infra.sdk_tfvars(stack.tf_dir, build=False)
+    var_file = _tfvars.write(stack.config, stack.project_dir, stack.tf_dir, sdk)
     _init(stack, runner)
     # select, never create: destroying a workspace that does not exist is a typo.
     runner(_tf(stack, "workspace", "select", stack.workspace), env=stack.env())

@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # WhatsApp template sync via CodeBuild
-# Installs the socialagent CLI from the bundled SDK source
+# Installs the socialagent CLI from the bundled SDK source in a checkout, or
+# from the published package (sdk_package_spec / sdk_wheel_path) in package
+# mode; see the header of infra-terraform/packaging.tf.
 
 variable "project_name" { type = string }
 variable "environment" { type = string }
@@ -30,6 +32,19 @@ variable "force_included_dirs" {
   default     = {}
 }
 variable "phone_number_id" {
+  type    = string
+  default = ""
+}
+variable "sdk_from_checkout" {
+  description = "Whether the root runs from a SMART checkout (bundle the SDK source) or not (install sdk_package_spec or sdk_wheel_path). The root validates the two values."
+  type        = bool
+  default     = true
+}
+variable "sdk_package_spec" {
+  type    = string
+  default = ""
+}
+variable "sdk_wheel_path" {
   type    = string
   default = ""
 }
@@ -66,7 +81,7 @@ locals {
   # build artifact would re-sync templates, and a stray .env, key or tfvars file
   # would land in the plan and state in plaintext.
   force_included_files = flatten([
-    for archive_path, source_dir in var.force_included_dirs : [
+    for archive_path, source_dir in(var.sdk_from_checkout ? var.force_included_dirs : {}) : [
       for f in fileset(source_dir, "**") : {
         filename = "${archive_path}/${f}"
         source   = "${source_dir}/${f}"
@@ -77,6 +92,38 @@ locals {
       && (length(regexall("(^|/)\\.env(\\.[^/]*)?(/|$)", f)) == 0 || endswith(f, ".example"))
     ]
   ])
+
+  # Package mode, as in packaging.tf: the wheel goes under a key carrying its
+  # MD5, below the prefix the S3Source grant already covers, and the bundle
+  # holds a manifest naming what is installed, so its MD5 (the sync trigger)
+  # follows the spec or the wheel.
+  sdk_from_wheel       = !var.sdk_from_checkout && var.sdk_wheel_path != ""
+  sdk_wheel_name       = local.sdk_from_wheel ? basename(var.sdk_wheel_path) : ""
+  sdk_wheel_md5        = local.sdk_from_wheel ? filemd5(var.sdk_wheel_path) : ""
+  sdk_wheel_object     = "${local.template_source_key_prefix}sdk-wheel-${local.sdk_wheel_md5}/${local.sdk_wheel_name}"
+  sdk_wheel_key        = local.sdk_from_wheel ? local.sdk_wheel_object : ""
+  sdk_install_manifest = local.sdk_from_wheel ? "wheel ${local.sdk_wheel_name} md5 ${local.sdk_wheel_md5}\n" : "${var.sdk_package_spec}\n"
+  sdk_env = var.sdk_from_checkout ? {} : {
+    SDK_SPEC      = local.sdk_from_wheel ? "/tmp/sdk-wheel/${local.sdk_wheel_name}" : var.sdk_package_spec
+    SDK_WHEEL_KEY = local.sdk_wheel_key
+    SOURCE_BUCKET = local.effective_template_source_bucket
+  }
+
+  # --only-binary=:all: for the reason given at the layer's buildspec.
+  package_buildspec = <<-BUILDSPEC
+    version: 0.2
+    phases:
+      install:
+        runtime-versions:
+          python: 3.12
+        commands:
+          - if [ -n "$SDK_WHEEL_KEY" ]; then mkdir -p /tmp/sdk-wheel && aws s3 cp "s3://$SOURCE_BUCKET/$SDK_WHEEL_KEY" /tmp/sdk-wheel/; fi
+          # Quoted: unquoted, YAML reads the trailing ":all:" as a mapping key.
+          - 'pip install "$SDK_SPEC" --quiet --only-binary=:all:'
+      build:
+        commands:
+          - socialagent templates sync --templates templates.yaml --phone-number-id "$PHONE_NUMBER_ID" --prefix "$TEMPLATE_PREFIX" --region "$AWS_REGION"
+  BUILDSPEC
 }
 
 # Source packaging — bundle templates.yaml + SMART SDK source + pyproject.toml
@@ -89,23 +136,34 @@ data "archive_file" "template_source" {
     filename = "templates.yaml"
   }
 
-  source {
-    content  = file(var.socialagent_pyproject_path)
-    filename = "pyproject.toml"
+  # The checkout-only sources keep the order they always had, so a checkout's
+  # bundle (and so its MD5, the sync trigger) is unchanged.
+  dynamic "source" {
+    for_each = var.sdk_from_checkout ? [var.socialagent_pyproject_path] : []
+    content {
+      content  = file(source.value)
+      filename = "pyproject.toml"
+    }
   }
 
   # pyproject.toml reads the package version from VERSION, next to it; without the
   # file, `pip install .` in the sync container fails before it reaches the templates.
-  source {
-    content  = file("${dirname(var.socialagent_pyproject_path)}/VERSION")
-    filename = "VERSION"
+  dynamic "source" {
+    for_each = var.sdk_from_checkout ? ["${dirname(var.socialagent_pyproject_path)}/VERSION"] : []
+    content {
+      content  = file(source.value)
+      filename = "VERSION"
+    }
   }
 
   # pyproject.toml names PYPI.md as the package readme, and hatchling refuses to
   # build metadata without it, so `pip install .` here needs it too.
-  source {
-    content  = file("${dirname(var.socialagent_pyproject_path)}/PYPI.md")
-    filename = "PYPI.md"
+  dynamic "source" {
+    for_each = var.sdk_from_checkout ? ["${dirname(var.socialagent_pyproject_path)}/PYPI.md"] : []
+    content {
+      content  = file(source.value)
+      filename = "PYPI.md"
+    }
   }
 
   # Bundle the SDK source so CodeBuild can pip install from local.
@@ -114,7 +172,7 @@ data "archive_file" "template_source" {
   # and cli/recipes/ guards are kept defensively in case stray .py files ever
   # reappear under those (now removed) package paths.
   dynamic "source" {
-    for_each = [for f in fileset(var.socialagent_sdk_dir, "**/*.py") : f if !startswith(f, "cli/blueprints/") && !startswith(f, "cli/recipes/")]
+    for_each = var.sdk_from_checkout ? [for f in fileset(var.socialagent_sdk_dir, "**/*.py") : f if !startswith(f, "cli/blueprints/") && !startswith(f, "cli/recipes/")] : []
     content {
       content  = file("${var.socialagent_sdk_dir}/${source.value}")
       filename = "src/socialagent/${source.value}"
@@ -130,6 +188,14 @@ data "archive_file" "template_source" {
     content {
       content  = file(source.value.source)
       filename = source.value.filename
+    }
+  }
+
+  dynamic "source" {
+    for_each = var.sdk_from_checkout ? [] : [local.sdk_install_manifest]
+    content {
+      content  = source.value
+      filename = "sdk-install.txt"
     }
   }
 }
@@ -198,6 +264,16 @@ resource "aws_s3_object" "template_source" {
   etag   = data.archive_file.template_source.output_md5
 }
 
+resource "aws_s3_object" "sdk_wheel" {
+  count  = local.sdk_from_wheel ? 1 : 0
+  bucket = local.effective_template_source_bucket
+  # Never empty, unlike sdk_wheel_key, which the provider would reject while
+  # validating the configuration.
+  key    = local.sdk_wheel_object
+  source = var.sdk_wheel_path
+  etag   = local.sdk_wheel_md5
+}
+
 # CodeBuild
 resource "aws_cloudwatch_log_group" "template_sync" {
   name              = "/aws/codebuild/${local.prefix}-template-sync"
@@ -261,12 +337,19 @@ resource "aws_codebuild_project" "template_sync" {
       name  = "AWS_REGION"
       value = data.aws_region.current.id
     }
+    dynamic "environment_variable" {
+      for_each = local.sdk_env
+      content {
+        name  = environment_variable.key
+        value = environment_variable.value
+      }
+    }
   }
 
   source {
-    type      = "S3"
-    location  = "${local.effective_template_source_bucket}/${aws_s3_object.template_source.key}"
-    buildspec = <<-BUILDSPEC
+    type     = "S3"
+    location = "${local.effective_template_source_bucket}/${aws_s3_object.template_source.key}"
+    buildspec = (var.sdk_from_checkout ? <<-BUILDSPEC
       version: 0.2
       phases:
         install:
@@ -278,6 +361,7 @@ resource "aws_codebuild_project" "template_sync" {
           commands:
             - socialagent templates sync --templates templates.yaml --phone-number-id "$PHONE_NUMBER_ID" --prefix "$TEMPLATE_PREFIX" --region "$AWS_REGION"
     BUILDSPEC
+    : local.package_buildspec)
   }
 
   logs_config {
@@ -334,7 +418,7 @@ resource "null_resource" "trigger_template_sync" {
       done
     EOT
   }
-  depends_on = [aws_s3_object.template_source]
+  depends_on = [aws_s3_object.template_source, aws_s3_object.sdk_wheel]
 }
 
 output "codebuild_project_name" { value = aws_codebuild_project.template_sync.id }

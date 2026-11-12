@@ -249,6 +249,13 @@ def main() -> None:
         help="Apply even if the plan destroys a bucket, table, Memory or secret (data does not move)",
     )
     p_deploy.add_argument(
+        "--sdk-wheel",
+        default=None,
+        metavar="PATH",
+        help="Install the SDK in the Lambda layer and template sync from this wheel "
+        "instead of the published package, to test an unreleased build",
+    )
+    p_deploy.add_argument(
         "--skip-model-check",
         action="store_true",
         help="Do not verify the project's Bedrock model is available in the Region",

@@ -38,7 +38,7 @@ def checkout(tmp_path: Path) -> tuple[Path, Path]:
 
 def test_parses_every_variable_and_the_required_ones():
     variables = terraform_variables(REAL_TF)
-    assert len(variables) == 63
+    assert len(variables) == 65
     required = {n for n, req in variables.items() if req}
     assert required == {
         "project_name",
@@ -178,3 +178,42 @@ def test_write_creates_gitignored_json(checkout):
     assert path.name == "my-bot-dev.tfvars.json"
     assert json.loads(path.read_text())["project_name"] == "my-bot"
     assert (path.parent / ".gitignore").read_text().strip().endswith("*")
+
+
+# ── The SDK package a root with no checkout above it installs ──────────────
+
+
+def test_sdk_variables_are_written_where_terraform_declares_them(checkout):
+    project, tf = checkout
+    sdk = {"sdk_package_spec": "smart-socialagent==2026.10.0"}
+    out = generate(_BASE, project, tf, sdk)
+    assert out["sdk_package_spec"] == "smart-socialagent==2026.10.0"
+    assert "sdk_package_spec" not in generate(_BASE, project, tf)
+
+
+def test_sdk_variables_are_dropped_for_a_root_without_them(checkout):
+    # A --tf-dir root from before package mode declares neither variable.
+    project, tf = checkout
+    text = (tf / "variables.tf").read_text()
+    (tf / "variables.tf").write_text(text.split('variable "sdk_package_spec"')[0])
+    out = generate(_BASE, project, tf, {"sdk_package_spec": "smart-socialagent==1.0"})
+    assert "sdk_package_spec" not in out
+
+
+@pytest.mark.parametrize("key", ["sdk_package_spec", "sdk_wheel_path"])
+def test_a_terraform_entry_may_not_choose_the_sdk(checkout, key):
+    # The CLI decides the SDK's source from how it was installed; a YAML key
+    # would let a project's file put another package in the Lambdas.
+    project, tf = checkout
+    config = {**_BASE, "terraform": {key: "smart-socialagent==2026.9.0"}}
+    with pytest.raises(ConfigError, match=f"{key} cannot be set here"):
+        generate(
+            config, project, tf, {"sdk_package_spec": "smart-socialagent==2026.10.0"}
+        )
+
+
+def test_write_carries_the_sdk_variables(checkout):
+    project, tf = checkout
+    wheel = str(project / "dist" / "x.whl")
+    path = write(_BASE, project, tf, {"sdk_wheel_path": wheel})
+    assert json.loads(path.read_text())["sdk_wheel_path"] == wheel

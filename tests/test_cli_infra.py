@@ -13,6 +13,7 @@ Terraform and no AWS: commands get a fake runner or a fake ``terraform``.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import stat
 from pathlib import Path
@@ -529,19 +530,296 @@ def test_config_sync_runs_terraform_in_the_managed_copy(
     assert seen["tf_dir"] == str(_copy(project))
 
 
-def test_deploy_from_the_managed_copy_stops_before_terraform(packaged, project):
-    # The layer build needs the SDK source next to the root, which only a
-    # checkout has; deploy and destroy say so instead of failing mid-plan.
-    calls: list = []
+SPEC = "smart-socialagent==2026.99.0"
 
+
+def _fake_terraform(calls: list):
     def runner(cmd, **kw):
         calls.append(cmd)
-        return Result(0)
+        # `terraform show -json` of a plan that changes nothing.
+        return Result(0, stdout="{}" if "show" in cmd else "")
 
-    for fn, name in ((_deploy.deploy, "deploy"), (_deploy.destroy, "destroy")):
-        with pytest.raises(CliError, match=f"`socialagent {name}` cannot run from"):
-            fn(_args(yes=True), runner=runner, account=ACCOUNT)
+    return runner
+
+
+def _deployed_tfvars(project: Path) -> dict:
+    return json.loads((project / ".socialagent" / "my-bot-dev.tfvars.json").read_text())
+
+
+WHEEL_NAME = "smart_socialagent-2026.99.0-py3-none-any.whl"
+WHEEL_BYTES = b"PK\x03\x04 the published wheel"
+WHEEL_SHA = hashlib.sha256(WHEEL_BYTES).hexdigest()
+FILE_URL = "https://files.pythonhosted.org/packages/ab/cd/" + WHEEL_NAME
+
+
+def _pypi(monkeypatch, *, files=None, body=WHEEL_BYTES, calls=None):
+    """Answer the PyPI JSON API and the file download from memory."""
+    files = (
+        files
+        if files is not None
+        else [
+            {
+                "packagetype": "bdist_wheel",
+                "filename": WHEEL_NAME,
+                "url": FILE_URL,
+                "digests": {"sha256": WHEEL_SHA},
+            },
+            {"packagetype": "sdist", "filename": "smart_socialagent-2026.99.0.tar.gz"},
+        ]
+    )
+
+    def fetch(url):
+        if calls is not None:
+            calls.append(url)
+        if url == "https://pypi.org/pypi/smart-socialagent/2026.99.0/json":
+            return json.dumps({"urls": files}).encode()
+        if url == FILE_URL:
+            return body
+        raise OSError(f"unexpected URL {url}")
+
+    monkeypatch.setattr(_infra, "_fetch", fetch)
+    monkeypatch.setattr(_infra, "_cli_sdk_version", lambda: "2026.99.0")
+
+
+def test_deploy_from_an_index_install_uploads_the_checked_published_wheel(
+    packaged, project, monkeypatch, capsys
+):
+    # An exact pin fixes the version, not the file: the stack installs the one
+    # wheel PyPI lists for this CLI's version, checked against its sha256,
+    # so CodeBuild never resolves the SDK from the index.
+    monkeypatch.setattr(_infra, "_install_origin", lambda: "index")
+    _pypi(monkeypatch)
+    calls: list = []
+    _deploy.deploy(
+        _args(skip_model_check=True), runner=_fake_terraform(calls), account=ACCOUNT
+    )
+    tfvars = _deployed_tfvars(project)
+    wheel = project / ".socialagent" / "sdk" / WHEEL_NAME
+    assert tfvars["sdk_wheel_path"] == str(wheel)
+    assert "sdk_package_spec" not in tfvars
+    assert wheel.read_bytes() == WHEEL_BYTES
+    assert any(
+        c[:2] == ["terraform", f"-chdir={_copy(project)}"] and "plan" in c
+        for c in calls
+    )
+    out = capsys.readouterr().out
+    assert f"SDK: {WHEEL_NAME}, sha256 {WHEEL_SHA[:12]}" in out
+
+
+def test_the_downloaded_wheel_is_reused_while_its_sha256_matches(project, monkeypatch):
+    calls: list = []
+    _pypi(monkeypatch, calls=calls)
+    first, _ = _infra.fetch_published_wheel("2026.99.0", project)
+    calls.clear()
+    again, _ = _infra.fetch_published_wheel("2026.99.0", project)
+    assert again == first
+    assert FILE_URL not in calls
+
+
+def test_a_wheel_whose_bytes_do_not_match_pypis_sha256_is_refused(project, monkeypatch):
+    _pypi(monkeypatch, body=b"something else")
+    with pytest.raises(CliError, match="but PyPI lists"):
+        _infra.fetch_published_wheel("2026.99.0", project)
+    assert not (project / ".socialagent" / "sdk" / WHEEL_NAME).exists()
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        [WHEEL_NAME, "smart_socialagent-2026.99.0-1-py3-none-any.whl"],
+        ["smart_socialagent-2026.99.0-1-py3-none-any.whl"],
+        [],
+    ],
+    ids=["a-second-wheel", "a-build-tag", "no-wheel"],
+)
+def test_a_release_without_exactly_one_plain_wheel_is_refused(
+    project, monkeypatch, names
+):
+    # A wheel added to a published version later would otherwise be picked
+    # up by the next build with nothing in the plan showing it.
+    files = [
+        {
+            "packagetype": "bdist_wheel",
+            "filename": n,
+            "url": FILE_URL,
+            "digests": {"sha256": WHEEL_SHA},
+        }
+        for n in names
+    ]
+    _pypi(monkeypatch, files=files)
+    with pytest.raises(CliError, match="refusing to pick one"):
+        _infra.fetch_published_wheel("2026.99.0", project)
+
+
+def test_a_wheel_url_off_pypis_file_host_is_refused(project, monkeypatch):
+    files = [
+        {
+            "packagetype": "bdist_wheel",
+            "filename": WHEEL_NAME,
+            "url": "http://example.com/" + WHEEL_NAME,
+            "digests": {"sha256": WHEEL_SHA},
+        }
+    ]
+    _pypi(monkeypatch, files=files)
+    with pytest.raises(CliError, match="unexpected URL"):
+        _infra.fetch_published_wheel("2026.99.0", project)
+
+
+def test_a_cli_installed_from_a_local_wheel_deploys_that_wheel(tmp_path, packaged):
+    wheel = tmp_path / WHEEL_NAME
+    wheel.write_bytes(b"PK")
+    tf = tmp_path / "elsewhere" / "infra-terraform"
+    tf.mkdir(parents=True)
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(_infra, "_install_origin", lambda: wheel)
+        assert _infra.sdk_tfvars(tf, project_dir=tmp_path) == {
+            "sdk_wheel_path": str(wheel.resolve())
+        }
+
+
+def test_an_editable_or_directory_install_is_refused_outside_a_checkout(
+    tmp_path, packaged, project, monkeypatch
+):
+    # Its code may match no published release: deploying the published
+    # package under this build's Terraform would mix two versions.
+    monkeypatch.setattr(_infra, "_install_origin", lambda: None)
+    calls: list = []
+    with pytest.raises(CliError, match="--sdk-wheel"):
+        _deploy.deploy(
+            _args(skip_model_check=True), runner=_fake_terraform(calls), account=ACCOUNT
+        )
     assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("record", "expected"),
+    [
+        (None, "index"),
+        (
+            '{"url": "file:///tmp/w/' + WHEEL_NAME + '", "archive_info": {}}',
+            Path("/tmp/w") / WHEEL_NAME,
+        ),
+        ('{"url": "file:///src/smart", "dir_info": {"editable": true}}', None),
+        ('{"url": "file:///src/smart", "dir_info": {}}', None),
+        ('{"url": "https://github.com/x/y", "vcs_info": {"vcs": "git"}}', None),
+        ("not json", None),
+    ],
+    ids=["index", "local-wheel", "editable", "directory", "vcs", "unreadable"],
+)
+def test_the_install_origin_comes_from_direct_url_json(monkeypatch, record, expected):
+    class Dist:
+        def read_text(self, name):
+            assert name == "direct_url.json"
+            return record
+
+    monkeypatch.setattr(_infra.metadata, "distribution", lambda name: Dist())
+    assert _infra._install_origin() == expected
+
+
+def test_destroy_from_the_managed_copy_plans_with_the_spec(
+    packaged, project, monkeypatch
+):
+    # Nothing is built on a destroy, so it downloads nothing.
+    monkeypatch.setattr(_infra, "sdk_package_spec", lambda: SPEC)
+    monkeypatch.setattr(_infra, "_fetch", lambda url: pytest.fail("downloaded"))
+    calls: list = []
+    _deploy.destroy(_args(yes=True), runner=_fake_terraform(calls), account=ACCOUNT)
+    assert _deployed_tfvars(project)["sdk_package_spec"] == SPEC
+    assert any("destroy" in c for c in calls)
+
+
+def test_deploy_passes_a_wheel_by_its_absolute_path(
+    tmp_path, packaged, project, monkeypatch, capsys
+):
+    monkeypatch.setattr(_infra, "_fetch", lambda url: pytest.fail("downloaded"))
+    # Relative to where the command runs: the project directory.
+    wheel = project / "dist" / "smart_socialagent-2026.99.0-py3-none-any.whl"
+    wheel.parent.mkdir()
+    wheel.write_bytes(b"PK")
+    _deploy.deploy(
+        _args(skip_model_check=True, sdk_wheel="dist/" + wheel.name),
+        runner=_fake_terraform([]),
+        account=ACCOUNT,
+    )
+    tfvars = _deployed_tfvars(project)
+    assert tfvars["sdk_wheel_path"] == str(wheel.resolve())
+    assert f"SDK: the wheel {wheel.resolve()}" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("name", "create", "message"),
+    [
+        ("missing.whl", False, "no such file"),
+        ("smart_socialagent-2026.99.0.tar.gz", True, "not a .whl file"),
+        ("other_package-1.0-py3-none-any.whl", True, "not a smart-socialagent wheel"),
+    ],
+)
+def test_sdk_wheel_must_be_an_existing_smart_socialagent_wheel(
+    tmp_path, packaged, project, name, create, message
+):
+    path = tmp_path / name
+    if create:
+        path.write_bytes(b"x")
+    calls: list = []
+    with pytest.raises(CliError, match=f"--sdk-wheel {path}: {message}"):
+        _deploy.deploy(
+            _args(skip_model_check=True, sdk_wheel=str(path)),
+            runner=_fake_terraform(calls),
+            account=ACCOUNT,
+        )
+    assert calls == []
+
+
+def test_a_checkout_gets_no_sdk_variables(tmp_path):
+    # A checkout builds from its own source, so its tfvars and plan stay as
+    # they were before package mode existed.
+    tf = tmp_path / "repo" / "infra-terraform"
+    tf.mkdir(parents=True)
+    (tf.parent / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    (tf.parent / "src" / "socialagent").mkdir(parents=True)
+    assert _infra.sdk_from_checkout(tf)
+    assert _infra.sdk_tfvars(tf) == {}
+    wheel = tmp_path / WHEEL_NAME
+    wheel.write_bytes(b"PK")
+    assert _infra.sdk_tfvars(tf, wheel) == {"sdk_wheel_path": str(wheel)}
+
+
+def test_a_pyproject_without_the_sdk_source_is_not_a_checkout(tmp_path):
+    # The same test as _is_checkout and packaging.tf: another project's
+    # pyproject.toml beside the root does not make it SMART's checkout.
+    tf = tmp_path / "repo" / "infra-terraform"
+    tf.mkdir(parents=True)
+    (tf.parent / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    assert not _infra.sdk_from_checkout(tf)
+
+
+def test_a_root_that_builds_nothing_gets_the_spec(tmp_path, monkeypatch):
+    monkeypatch.setattr(_infra, "sdk_package_spec", lambda: SPEC)
+    tf = tmp_path / "elsewhere" / "infra-terraform"
+    tf.mkdir(parents=True)
+    assert not _infra.sdk_from_checkout(tf)
+    assert _infra.sdk_tfvars(tf, build=False) == {"sdk_package_spec": SPEC}
+
+
+def test_the_spec_is_smart_socialagent_at_the_clis_version(monkeypatch):
+    monkeypatch.setattr(
+        _infra.metadata,
+        "version",
+        lambda name: {"smart-socialagent": "2026.11.0"}[name],
+    )
+    assert _infra.sdk_package_spec() == "smart-socialagent==2026.11.0"
+
+
+def test_config_tfvars_outside_a_checkout_carries_the_spec(
+    packaged, project, monkeypatch, capsys
+):
+    monkeypatch.setattr(_infra, "sdk_package_spec", lambda: SPEC)
+    monkeypatch.setattr(_infra, "_fetch", lambda url: pytest.fail("downloaded"))
+    cmd_config(
+        argparse.Namespace(config_command="tfvars", env="dev", tf_dir=""),
+        argparse.ArgumentParser(),
+    )
+    assert json.loads(capsys.readouterr().out)["sdk_package_spec"] == SPEC
 
 
 # ── PATH preflight ───────────────────────────────────────────────────────────

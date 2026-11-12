@@ -3080,6 +3080,100 @@ def test_build_archives_ship_the_readme():
 
 
 # =============================================================================
+# Package mode: wheels only, from keys the build roles already read
+# =============================================================================
+
+
+def _named_heredoc(tf: str, name: str) -> str:
+    """The ``name = <<-MARKER`` heredoc in *tf*, dedented, whatever its marker."""
+    match = re.search(rf"^\s*{name}\s*=\s*<<-(\w+)\n(.*?)\n\s*\1$", tf, re.M | re.S)
+    assert match, f"no `{name} = <<-...` heredoc"
+    return textwrap.dedent(match.group(2))
+
+
+_PACKAGE_BUILDSPECS = {
+    "packaging.tf": "layer_package_buildspec",
+    "modules/templates/main.tf": "package_buildspec",
+}
+
+
+@pytest.mark.parametrize("path", sorted(_PACKAGE_BUILDSPECS))
+def test_package_mode_installs_the_sdk_from_wheels_only(path):
+    """Package mode installs from the package index inside the account.
+
+    ``--only-binary=:all:`` keeps pip from building any source distribution,
+    which would run that package's build code in CodeBuild with the build
+    role's credentials. Every install there takes the flag, and none installs
+    from a source tree, which package mode does not have.
+    """
+    tf = _code((INFRA / path).read_text())
+    spec = yaml.safe_load(_named_heredoc(tf, _PACKAGE_BUILDSPECS[path]))
+    commands = [c for p in spec["phases"].values() for c in p.get("commands", [])]
+    # A plain scalar ending in ":all:" parses as a mapping, which CodeBuild rejects.
+    assert all(isinstance(c, str) for c in commands), commands
+    installs = [c for c in commands if re.search(r"\bpip\b.*\binstall\b", c)]
+    assert installs, f"{path}: the package-mode buildspec installs nothing"
+    for command in installs:
+        assert "--only-binary=:all:" in shlex.split(command), command
+        assert '"$SDK_SPEC"' in command, command
+        assert "install ." not in command, command
+
+
+def test_package_mode_keeps_the_agent_runtime_out_of_the_layer():
+    tf = _code((INFRA / "packaging.tf").read_text())
+    spec = yaml.safe_load(_named_heredoc(tf, "layer_package_buildspec"))
+    commands = spec["phases"]["build"]["commands"]
+    install = next(i for i, c in enumerate(commands) if "pip install" in c)
+    assert "rm -rf /tmp/layer/python/socialagent_runtime" in commands[install + 1 :]
+
+
+def test_package_mode_adds_no_grant_to_the_build_roles():
+    """A wheel is uploaded under the prefix each build role already reads.
+
+    tftest/sdk_package_mode.tftest.hcl evaluates the keys; this pins the other
+    half, that the grants they fall under are the ones that were there.
+    """
+    packaging = _code((INFRA / "packaging.tf").read_text())
+    assert re.search(
+        r'^\s*layer_build_prefix\s*=\s*local\.use_shared_artifacts_bucket \? "\$\{local\.artifacts_key_prefix\}/layer-build/" : ""$',
+        packaging,
+        re.M,
+    )
+    assert re.search(
+        r'^\s*layer_sdk_wheel_object\s*=\s*"\$\{local\.layer_build_prefix\}sdk-wheel-',
+        packaging,
+        re.M,
+    )
+    layer_policy = _block(packaging, 'resource "aws_iam_role_policy" "layer_build"')
+    assert re.findall(r'Sid\s*=\s*"(\w+)"', layer_policy) == [
+        "CloudWatchLogs",
+        "S3ReadWrite",
+        "S3Bucket",
+    ]
+    assert (
+        'Resource = "arn:aws:s3:::${local.effective_layer_build_bucket}${local.use_shared_artifacts_bucket ? "/${local.artifacts_key_prefix}/layer-build" : ""}/*"'
+        in layer_policy
+    )
+
+    templates = _code((INFRA / "modules" / "templates" / "main.tf").read_text())
+    assert re.search(
+        r'^\s*sdk_wheel_object\s*=\s*"\$\{local\.template_source_key_prefix\}sdk-wheel-',
+        templates,
+        re.M,
+    )
+    sync_policy = _block(templates, 'resource "aws_iam_role_policy" "template_sync"')
+    assert re.findall(r'Sid\s*=\s*"(\w+)"', sync_policy) == [
+        "S3Source",
+        "CloudWatchLogs",
+        "EUMTemplates",
+    ]
+    assert (
+        'Resource = "arn:aws:s3:::${local.effective_template_source_bucket}${local.use_shared_artifacts ? "/${local.template_source_key_prefix}*" : "/*"}"'
+        in sync_policy
+    )
+
+
+# =============================================================================
 # The zip-mode agent build fails on a failed install and builds for the runtime
 # =============================================================================
 

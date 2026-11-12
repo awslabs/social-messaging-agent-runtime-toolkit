@@ -20,6 +20,11 @@ Rules:
   source dir, as Terraform expects.
 - ``secrets: [a, b]`` becomes ``{"a": {}, "b": {}}`` — names only; values are
   set out of band with ``socialagent secrets set``.
+- ``sdk`` (from ``_infra.sdk_tfvars``) names the package a root with no
+  checkout above it installs the SDK from. It is set only where Terraform
+  declares the variable. A ``terraform:`` entry may not set it: the CLI
+  decides the SDK's source from how it was installed, and
+  ``deploy --sdk-wheel`` is the way to choose another.
 - ``terraform:`` entries pass through verbatim. A key that is not a variable
   in ``infra-terraform/variables.tf`` is an error, so a typo fails here
   instead of being ignored.
@@ -41,6 +46,9 @@ _PATH_FIELDS = {
     "agent.handlers_dir": "handlers",
     "whatsapp.templates": None,  # no default: "" disables template sync
 }
+
+# Set by the CLI (``_infra.sdk_tfvars``), never by the YAML.
+_SDK_VARIABLES = frozenset({"sdk_package_spec", "sdk_wheel_path"})
 
 _VARIABLE_RE = re.compile(r'^variable\s+"(\w+)"\s*\{(.*?)^\}', re.S | re.M)
 
@@ -82,7 +90,12 @@ def _path(value: str, project_dir: Path, tf_dir: Path) -> str:
     return str(target)
 
 
-def generate(config: dict[str, Any], project_dir: Path, tf_dir: Path) -> dict[str, Any]:
+def generate(
+    config: dict[str, Any],
+    project_dir: Path,
+    tf_dir: Path,
+    sdk: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """Return the Terraform variables for a validated v3 *config*.
 
     Raises:
@@ -106,7 +119,18 @@ def generate(config: dict[str, Any], project_dir: Path, tf_dir: Path) -> dict[st
     if secrets:
         tfvars["secrets"] = {name: {} for name in secrets}
 
+    tfvars.update({k: v for k, v in (sdk or {}).items() if k in known})
+
     passthrough = config.get("terraform") or {}
+    reserved = sorted(set(passthrough) & _SDK_VARIABLES)
+    if reserved:
+        raise ConfigError(
+            "terraform: "
+            + ", ".join(reserved)
+            + " cannot be set here: the CLI chooses the SDK the stack installs "
+            "from how it was installed. To deploy another build, pass "
+            "`socialagent deploy --sdk-wheel <wheel>`"
+        )
     unknown = sorted(set(passthrough) - set(known))
     if unknown:
         raise ConfigError(
@@ -133,11 +157,17 @@ def tfvars_path(project_dir: Path, config: dict[str, Any]) -> Path:
     )
 
 
-def write(config: dict[str, Any], project_dir: Path, tf_dir: Path) -> Path:
+def write(
+    config: dict[str, Any],
+    project_dir: Path,
+    tf_dir: Path,
+    sdk: dict[str, str] | None = None,
+) -> Path:
     """Generate and write the tfvars JSON; return its path."""
     out = tfvars_path(project_dir, config)
     work_dir(project_dir)
-    out.write_text(json.dumps(generate(config, project_dir, tf_dir), indent=2) + "\n")
+    tfvars = generate(config, project_dir, tf_dir, sdk)
+    out.write_text(json.dumps(tfvars, indent=2) + "\n")
     return out
 
 

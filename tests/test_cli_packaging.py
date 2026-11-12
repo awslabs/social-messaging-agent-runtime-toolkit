@@ -19,6 +19,7 @@ that cannot start is the same bug one step later.
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -355,19 +356,28 @@ def _layer_archive() -> tuple[list[str], list[str]]:
 
 
 def _template_sync_archive() -> tuple[list[str], list[str]]:
-    """The repo-root files and trees the template-sync archive zips.
+    """The repo-root files and trees the template-sync archive zips in a checkout.
 
     The files are the literal ``filename = ...`` entries of the archive's
     ``source`` blocks, less ``templates.yaml`` (the project's file, from
-    ``var.templates_path``, which ``pip install .`` never reads); the
-    interpolated ones belong to the dynamic blocks that carry the SDK's
-    ``*.py`` and the trees ``main.tf`` passes as ``force_included_dirs``.
+    ``var.templates_path``, which ``pip install .`` never reads) and the
+    blocks only package mode zips (``for_each = var.sdk_from_checkout ? [] :
+    ...``, the install manifest); the interpolated ones belong to the dynamic
+    blocks that carry the SDK's ``*.py`` and the trees ``main.tf`` passes as
+    ``force_included_dirs``.
     """
     infra = REPO_ROOT / "infra-terraform"
     archive = _hcl_block(
         (infra / "modules" / "templates" / "main.tf").read_text(),
         'data "archive_file" "template_source"',
     )
+    package_only = re.compile(
+        r"^\s*for_each\s*=\s*var\.sdk_from_checkout\s*\?\s*\[\]", re.M
+    )
+    for match in reversed(list(re.finditer(r'dynamic\s+"source"\s*\{', archive))):
+        end = _hcl_balanced(archive, match.end() - 1)
+        if package_only.search(archive[match.start() : end]):
+            archive = archive[: match.start()] + archive[end:]
     files = [
         name
         for name in re.findall(r'^\s*filename\s*=\s*"([^"]+)"', archive, re.M)
@@ -475,14 +485,68 @@ def test_archives_without_terraform_still_build_the_sdk(tmp_path: Path, archive:
     assert not [n for n in names if n.startswith(_TF_IN_WHEEL)]
 
 
+def _published_spec() -> str:
+    """The spec a CLI built from this checkout deploys: its distribution at its version."""
+    with (REPO_ROOT / "pyproject.toml").open("rb") as fh:
+        name = tomllib.load(fh)["project"]["name"]
+    return f"{name}=={(REPO_ROOT / 'VERSION').read_text().strip()}"
+
+
+# Plans the managed copy with mocked providers, where no checkout is above it.
+# tftest/sdk_package_mode.tftest.hcl plans package mode from the repo, where a
+# checkout always is, so only here can the copy be planned without a spec.
+_PACKAGE_MODE_TFTEST = """
+mock_provider "aws" {
+  mock_data "aws_caller_identity" {
+    defaults = { account_id = "123456789012" }
+  }
+  mock_data "aws_region" {
+    defaults = { id = "us-east-1", name = "us-east-1" }
+  }
+  mock_data "aws_partition" {
+    defaults = { partition = "aws" }
+  }
+}
+mock_provider "null" {}
+mock_provider "random" {}
+
+variables {
+  project_name     = "mybot"
+  environment      = "dev"
+  agent_source_dir = "%(project)s"
+  handlers_dir     = "%(project)s/handlers"
+}
+
+run "no_spec_is_refused" {
+  command         = plan
+  expect_failures = [data.archive_file.layer_source]
+}
+
+run "the_spec_alone_builds_the_layer" {
+  command = plan
+
+  variables {
+    sdk_package_spec = "%(spec)s"
+  }
+
+  assert {
+    condition     = !local.sdk_from_checkout && [for s in data.archive_file.layer_source.source : s.filename] == ["sdk-install.txt"]
+    error_message = "Without a checkout above it, the copy installs the spec and reads no repo tree."
+  }
+}
+"""
+
+
 @pytest.mark.slow
-def test_pip_installed_cli_runs_its_own_terraform(installed_cli: Path, tmp_path: Path):
-    """With no checkout, the installed CLI resolves the Terraform it ships.
+def test_pip_installed_cli_runs_its_own_terraform(
+    installed_cli: Path, built_wheel: Path, tmp_path: Path
+):
+    """With no checkout, the installed CLI deploys from the Terraform it ships.
 
     ``config tfvars`` reads it in place and writes nothing; commands that run
-    Terraform get the project's managed copy, whose bootstrap root validates.
-    ``deploy`` and ``destroy`` refuse the copy until the Lambda layer can be
-    built without the SDK source next to the root.
+    Terraform get the project's managed copy, and ``deploy`` passes it the
+    CLI's own package to install. Both roots of the copy validate, and the
+    main one plans with the spec and refuses to plan without one.
     """
     work = tmp_path / "work"
     work.mkdir()
@@ -495,31 +559,39 @@ def test_pip_installed_cli_runs_its_own_terraform(installed_cli: Path, tmp_path:
     )
     assert init.returncode == 0, init.stderr
     project = (work / "mybot").resolve()
+    spec = _published_spec()
 
     tfvars = subprocess.run(
         [socialagent, "config", "tfvars"], cwd=project, capture_output=True, text=True
     )
     assert tfvars.returncode == 0, tfvars.stderr
-    assert '"project_name": "mybot"' in tfvars.stdout
+    assert json.loads(tfvars.stdout)["project_name"] == "mybot"
+    assert json.loads(tfvars.stdout)["sdk_package_spec"] == spec
     assert not (project / ".socialagent").exists()
 
     # Through the resolver deploy uses, with a fake runner and a given account:
     # nothing here can reach AWS or run Terraform.
     script = textwrap.dedent(
         """
-        import argparse
+        import argparse, json
         from pathlib import Path
         from socialagent.cli import _deploy, _infra
-        from socialagent.cli._errors import CliError
+        from socialagent.cli._runner import Result
 
         print(_infra.find_tf_dir(Path.cwd()))
-        args = argparse.Namespace(env="dev", plan=True, yes=False, tf_dir="")
+        args = argparse.Namespace(
+            env="dev", plan=True, yes=False, tf_dir="", skip_model_check=True
+        )
         calls = []
-        try:
-            _deploy.deploy(args, runner=lambda cmd, **kw: calls.append(cmd), account="123456789012")
-        except CliError as exc:
-            print("refused:", exc)
-        print("terraform calls:", len(calls))
+
+        def runner(cmd, **kw):
+            calls.append(cmd)
+            return Result(0, stdout="{}" if "show" in cmd else "")
+
+        _deploy.deploy(args, runner=runner, account="123456789012")
+        written = Path(".socialagent/mybot-dev.tfvars.json").read_text()
+        print("wheel:", json.loads(written)["sdk_wheel_path"])
+        print("planned:", any("plan" in c for c in calls))
         """
     )
     resolved = subprocess.run(
@@ -528,30 +600,52 @@ def test_pip_installed_cli_runs_its_own_terraform(installed_cli: Path, tmp_path:
         capture_output=True,
         text=True,
     )
-    assert resolved.returncode == 0, resolved.stderr
+    assert resolved.returncode == 0, resolved.stdout + resolved.stderr
     lines = resolved.stdout.splitlines()
     copy = Path(lines[0])
     assert copy == project / ".socialagent" / "infra"
     assert (copy / "main.tf").is_file() and (copy / "bootstrap" / "main.tf").is_file()
+    assert not (copy.parent / "pyproject.toml").exists()
     assert "edits there are overwritten" in resolved.stderr
-    assert any(
-        line.startswith("refused: `socialagent deploy` cannot run from")
-        for line in lines
-    )
-    assert lines[-1] == "terraform calls: 0"
+    # Installed from a local wheel, the CLI deploys that same wheel.
+    assert f"wheel: {built_wheel.resolve()}" in lines
+    assert lines[-1] == "planned: True"
 
     terraform = shutil.which("terraform")
     if terraform is None:
-        pytest.skip("terraform is not on PATH; the bootstrap root was not validated")
-    env = {**os.environ, "TF_DATA_DIR": str(tmp_path / "tf-data")}
-    for step in (["init", "-backend=false", "-input=false"], ["validate"]):
-        ran = subprocess.run(
-            [terraform, f"-chdir={copy / 'bootstrap'}", *step],
-            env=env,
-            capture_output=True,
-            text=True,
-        )
-        assert ran.returncode == 0, ran.stdout + ran.stderr
+        pytest.skip("terraform is not on PATH; the copy's roots were not validated")
+    for root in (copy, copy / "bootstrap"):
+        env = {**os.environ, "TF_DATA_DIR": str(tmp_path / "tf-data" / root.name)}
+        for step in (["init", "-backend=false", "-input=false"], ["validate"]):
+            ran = subprocess.run(
+                [terraform, f"-chdir={root}", *step],
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            assert ran.returncode == 0, f"{root}: " + ran.stdout + ran.stderr
+
+    version = subprocess.run(
+        [terraform, "version", "-json"], capture_output=True, text=True, check=True
+    )
+    found = tuple(
+        int(n) for n in json.loads(version.stdout)["terraform_version"].split(".")[:2]
+    )
+    if found < (1, 7):
+        pytest.skip("terraform test with mock providers needs Terraform 1.7")
+    # tftest/ is left out of the copy's hash, so this does not refresh the copy.
+    (copy / "tftest").mkdir()
+    (copy / "tftest" / "package_mode.tftest.hcl").write_text(
+        _PACKAGE_MODE_TFTEST % {"project": project, "spec": spec}
+    )
+    ran = subprocess.run(
+        [terraform, f"-chdir={copy}", "test", "-test-directory=tftest"],
+        env={**os.environ, "TF_DATA_DIR": str(tmp_path / "tf-data" / copy.name)},
+        capture_output=True,
+        text=True,
+    )
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    assert "2 passed, 0 failed" in ran.stdout
 
 
 @pytest.mark.slow

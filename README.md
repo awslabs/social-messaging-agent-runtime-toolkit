@@ -142,7 +142,7 @@ uv run socialagent deploy
 > The deploy also creates the deployment marker stack of the anonymous deployment counter (`socialagent deploy` prints a line saying so); `terraform.enable_deployment_metrics: false` in `socialagent.dev.yaml` turns it off ([what is emitted](#anonymous-operational-metrics)).
 > See [Getting Started](docs/getting-started.md) for the full walkthrough.
 
-The CLI is also on PyPI, without a clone: `pip install smart-socialagent` (the command and the import package are `socialagent`). From there `init` and `dev` work anywhere; `deploy` still needs a clone of this repo for its `infra-terraform/`, or `--tf-dir` pointing at one.
+The CLI is also on PyPI, without a clone: `pip install smart-socialagent` (the command and the import package are `socialagent`). From there every command works without a clone, `deploy` and `destroy` included: the wheel ships the stack's Terraform, and the stack installs the published package at the CLI's version ([Getting Started](docs/getting-started.md#3-deploy-to-aws--socialagent-deploy)).
 
 `socialagent init` scaffolds everything you need:
 

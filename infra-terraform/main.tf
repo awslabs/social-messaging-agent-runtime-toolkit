@@ -698,6 +698,10 @@ module "templates" {
   shared_artifacts_bucket = var.shared_artifacts_bucket
   artifacts_key_prefix    = local.artifacts_key_prefix
 
+  sdk_from_checkout = local.sdk_from_checkout
+  sdk_package_spec  = var.sdk_package_spec
+  sdk_wheel_path    = var.sdk_wheel_path
+
   depends_on = [module.runtime]
 }
 

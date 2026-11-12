@@ -41,7 +41,7 @@ Runs inside the Lambda functions. It provides:
 - `EUMSocialProvider` — the **only** code in the repo permitted to call `boto3.client("socialmessaging", ...)` for message delivery
 - The AgentCore Memory writer, per-user state table access, and the template registry
 
-It is not installed from PyPI. At deploy time CodeBuild runs `pip install .` on the repo source tree to build a shared Lambda layer, and each handler ships as a small zip on top of it (`infra-terraform/packaging.tf`).
+At deploy time CodeBuild builds a shared Lambda layer from it, and each handler ships as a small zip on top of it (`infra-terraform/packaging.tf`). From a checkout the layer is `pip install .` of the repo source tree; with no checkout above the Terraform root (a pip-installed CLI's managed copy) it is the published package, pinned to the CLI's version and installed from PyPI as wheels only, or a wheel passed to `deploy --sdk-wheel`.
 
 ### Agent Runtime Package (`packages/socialagent-runtime/`)
 
