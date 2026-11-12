@@ -4,33 +4,45 @@
 # by GitHub login, so keep the two in step. GitHub ignores an owner without write
 # access to the repository, so each login needs it.
 #
-# Each area below has an owner (first login) and a backup (second login). The
-# branch protection on main requires, for every file changed, an approval from one
-# of that file's owners. The intended setup is two approvals, at least one of them
-# from an owner of the area; the second approval becomes required once the branch
-# protection setting is changed, separately from this file.
+# Each area below has one owner, for routing only. The branch protection on main
+# does not require code owners' review: it requires one approval from a
+# maintainer other than the author, so an owner who is away never blocks an area.
+# CONTRIBUTING.md ("Who reviews a pull request") says when a second reviewer is
+# required and who covers an area while its owner is away.
 
 # Everything else: docs, ADRs, tests, scripts
 *                                   @emolvera @digalaviz @art-aws @mfls-aws
 
 # Agent and runtime
-/packages/socialagent-runtime/      @mfls-aws @art-aws
-/blueprints/                        @mfls-aws @art-aws
-/recipes/                           @mfls-aws @art-aws
+/packages/socialagent-runtime/      @mfls-aws
+/blueprints/                        @mfls-aws
+/recipes/                           @mfls-aws
 
 # Admin console
-/socialagent-admin-console/         @art-aws @emolvera
+/socialagent-admin-console/         @art-aws
 
 # Infrastructure as code
-/infra-terraform/                   @art-aws @digalaviz
+/infra-terraform/                   @art-aws
 
 # CLI and Lambda control layer
-/src/socialagent/                   @digalaviz @emolvera
+/src/socialagent/                   @digalaviz
 
 # Security: CI and release machinery, the security policy, the threat model, data
-# flows and IAM. Last, so these lines win over the areas above.
-/.github/                           @emolvera @digalaviz
-/SECURITY.md                        @emolvera @digalaviz
-/docs/threat-model.md               @emolvera @digalaviz
-/docs/data-flows.md                 @emolvera @digalaviz
-/infra-terraform/modules/iam/       @emolvera @digalaviz
+# flows, and every Terraform file that defines an IAM role or policy
+# (tests/test_release_files.py fails when another one appears). Last, so these
+# lines win over the areas above.
+/.github/                                                        @emolvera
+/SECURITY.md                                                     @emolvera
+/docs/threat-model.md                                            @emolvera
+/docs/threat-model.json                                          @emolvera
+/docs/data-flows.md                                              @emolvera
+/infra-terraform/packaging.tf                                    @emolvera
+/infra-terraform/modules/event-api/main.tf                       @emolvera
+/infra-terraform/modules/iam/                                    @emolvera
+/infra-terraform/modules/memory/main.tf                          @emolvera
+/infra-terraform/modules/runtime/codebuild.tf                    @emolvera
+/infra-terraform/modules/secrets/main.tf                         @emolvera
+/infra-terraform/modules/security-logging/main.tf                @emolvera
+/infra-terraform/modules/templates/main.tf                       @emolvera
+/socialagent-admin-console/infra-terraform/modules/api/main.tf   @emolvera
+/socialagent-admin-console/infra-terraform/modules/auth/main.tf  @emolvera

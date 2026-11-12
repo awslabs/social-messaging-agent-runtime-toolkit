@@ -44,9 +44,21 @@ Pull requests from outside contributors are reviewed by the project maintainers,
 
 ## What to expect from the maintainers
 
-Issues and pull requests are triaged within five business days: labelled, and either answered, assigned, or closed with the reason. Beyond that, response time is best effort. A pull request that passes the checks and has an approving review from a code owner is merged by a maintainer (one from an outside contributor also gets the second review described in [Reviewing a pull request](#reviewing-a-pull-request-maintainers)); one that goes a month without a response from its author after a review is closed, and can be reopened. There is no stale bot; a maintainer closes it and says why.
+Issues and pull requests are triaged within five business days: labelled, and either answered, assigned, or closed with the reason. Beyond that, response time is best effort. A pull request that passes the checks and has an approving review from a maintainer other than its author is merged by a maintainer (one from an outside contributor also gets the second review described in [Reviewing a pull request](#reviewing-a-pull-request-maintainers)); one that goes a month without a response from its author after a review is closed, and can be reopened. There is no stale bot; a maintainer closes it and says why.
 
-Reviews route automatically by area: `.github/CODEOWNERS` gives each part of the tree an owner and a backup among the four maintainers, by GitHub login (agent and runtime, admin console, infrastructure as code, CLI and Lambda control layer, and security, which covers `.github/`, `SECURITY.md`, the threat model, the data flows and the IAM module), and names all four for everything else, such as docs, ADRs, tests and scripts. The branch protection on `main` requires, for every file a pull request changes, an approval from one of that file's code owners. The intended setup is two approvals, at least one of them from an owner of the area; the second approval becomes required once the branch protection setting is changed.
+Reviews route automatically by area: `.github/CODEOWNERS` gives each part of the tree one owner among the four maintainers, by GitHub login (agent and runtime, admin console, infrastructure as code, CLI and Lambda control layer, and security, which covers `.github/`, `SECURITY.md`, the threat model, the data flows and every Terraform file that defines an IAM role or policy), and names all four for everything else, such as docs, ADRs, tests and scripts. Owners are for routing: the branch protection on `main` requires one approval from a maintainer other than the author, not from a code owner, so an owner who is away never blocks an area.
+
+### Who reviews a pull request
+
+- **One approval** from a maintainer other than the author, for every pull request.
+- **A second maintainer's review** as well, for:
+  - a pull request by an area's owner that changes their own area;
+  - a pull request from a fork ([Reviewing a pull request](#reviewing-a-pull-request-maintainers), step 5);
+  - a change to a security path, the lines at the end of `.github/CODEOWNERS`;
+  - a change to a contract: the payload between the Lambdas and the agent (`SOCIALAGENT_VERSION`), or the CLI's public commands and options.
+- **While an owner is away**, the maintainers agree who covers the area for that period; `.github/CODEOWNERS` does not change.
+
+GitHub cannot require two approvals for some paths only, so the second review is the maintainers' rule rather than a branch protection setting.
 
 ## Contributions written with AI assistance
 
