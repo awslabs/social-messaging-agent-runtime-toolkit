@@ -543,8 +543,10 @@ variable "sdk_package_spec" {
   validation {
     # An exact pin: a range, a wildcard, extras or a URL would let the layer
     # change between two builds of the same configuration.
-    condition     = var.sdk_package_spec == "" || can(regex("^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?==[0-9][0-9A-Za-z.!+_-]*$", var.sdk_package_spec))
-    error_message = "Must be <distribution>==<exact version>, e.g. \"smart-socialagent==2026.10.0\": no ranges, wildcards, extras or URLs."
+    # Only the toolkit's own distribution: the layer must not install a
+    # look-alike name.
+    condition     = var.sdk_package_spec == "" || can(regex("^smart-socialagent==[0-9][0-9A-Za-z.!+_-]*$", var.sdk_package_spec))
+    error_message = "Must be smart-socialagent==<exact version>, e.g. \"smart-socialagent==2026.11.0\": no other distribution, ranges, wildcards, extras or URLs."
   }
 }
 
@@ -557,8 +559,8 @@ variable "sdk_wheel_path" {
     # A conditional, not `||`: Terraform before 1.12 evaluates both sides of
     # `||`, and fileexists("") fails on "." being a directory. try() covers a
     # path that names a directory.
-    condition     = var.sdk_wheel_path == "" ? true : (can(regex("^[A-Za-z0-9_.+-]+\\.whl$", basename(var.sdk_wheel_path))) && try(fileexists(var.sdk_wheel_path), false))
-    error_message = "Must be the path of an existing .whl file whose name holds only letters, digits and . _ + -."
+    condition     = var.sdk_wheel_path == "" ? true : (can(regex("^smart_socialagent-[A-Za-z0-9_.+-]+\\.whl$", basename(var.sdk_wheel_path))) && try(fileexists(var.sdk_wheel_path), false))
+    error_message = "Must be the path of an existing smart-socialagent wheel (smart_socialagent-<version>-...whl) whose name holds only letters, digits and . _ + -."
   }
 }
 

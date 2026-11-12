@@ -45,7 +45,8 @@ import os
 import re
 import shutil
 import sys
-import tomllib
+import urllib.parse
+import urllib.request
 from importlib import metadata
 from pathlib import Path
 
@@ -293,112 +294,214 @@ def find_tf_dir(
     return materialize(project_dir)
 
 
-# The import package whose distribution package mode installs.
-_SDK_IMPORT = "socialagent"
+# Package mode installs this distribution and no other: the spec and the wheel
+# a deploy names are checked against it, here and in variables.tf.
+SDK_DISTRIBUTION = "smart-socialagent"
+_SDK_WHEEL_PREFIX = SDK_DISTRIBUTION.replace("-", "_") + "-"
+_PYPI_JSON = "https://pypi.org/pypi/{name}/{version}/json"
+_PYPI_FILES_HOST = "files.pythonhosted.org"
 
 
 def sdk_from_checkout(tf_dir: Path) -> bool:
     """Whether *tf_dir* builds the SDK from a checkout's source.
 
-    The same test as ``fileexists("${path.root}/../pyproject.toml")`` in
-    ``packaging.tf``, so the CLI and Terraform agree on the mode.
+    The same test as ``packaging.tf``'s ``sdk_from_checkout`` and as
+    :func:`_is_checkout`: ``pyproject.toml`` and ``src/socialagent/`` beside
+    the root, so the CLI and Terraform agree on the mode.
     """
-    return (tf_dir / ".." / "pyproject.toml").resolve().is_file()
+    repo = (tf_dir / "..").resolve()
+    return (repo / "pyproject.toml").is_file() and (
+        repo / "src" / "socialagent"
+    ).is_dir()
 
 
-def sdk_distribution() -> str:
-    """The distribution this CLI is installed as: ``smart-socialagent``, or ``socialagent`` from before the rename.
-
-    Read from the installed metadata (the distribution that provides the
-    ``socialagent`` import package), else from the ``pyproject.toml`` of the
-    checkout this module runs from, so a rename of ``[project] name`` needs no
-    change here.
-    """
-    found = sorted(set(metadata.packages_distributions().get(_SDK_IMPORT, [])))
-    if len(found) == 1:
-        return found[0]
-    if len(found) > 1:
-        raise CliError(
-            f"more than one installed distribution provides `{_SDK_IMPORT}` "
-            f"({', '.join(found)}), so the SDK version to deploy is ambiguous: "
-            "uninstall all but one"
-        )
-    pyproject = Path(__file__).resolve().parents[3] / "pyproject.toml"
+def _cli_sdk_version() -> str:
     try:
-        return tomllib.loads(pyproject.read_text())["project"]["name"]
-    except (OSError, ValueError, KeyError) as exc:
-        raise CliError(
-            f"cannot tell which distribution provides `{_SDK_IMPORT}`; "
-            "pass --sdk-wheel <path to a built wheel>"
-        ) from exc
+        return metadata.version(SDK_DISTRIBUTION)
+    except metadata.PackageNotFoundError:
+        from socialagent.cli import _version  # noqa: PLC0415 — cli/__init__ imports the command modules
+
+        return _version()
 
 
 def sdk_package_spec() -> str:
-    """``<distribution>==<this CLI's version>``: the package the stack installs.
+    """``smart-socialagent==<this CLI's version>``: the release the stack installs.
 
     Pinned to the CLI's own version because the Terraform it runs is the copy
     this CLI ships, and the layer and template sync must come from the same
     release.
     """
-    distribution = sdk_distribution()
+    return f"{SDK_DISTRIBUTION}=={_cli_sdk_version()}"
+
+
+def _install_origin() -> str | Path | None:
+    """How this CLI was installed: ``"index"``, the local wheel it came from, or None.
+
+    Read from the ``direct_url.json`` pip records (PEP 610). No record means
+    a package index. A local ``.whl`` is that wheel. A directory (editable or
+    not), a VCS URL, a remote archive or missing metadata is None: the code
+    running may match no published release, so nothing can be deployed from
+    it without ``--sdk-wheel``.
+    """
     try:
-        version = metadata.version(distribution)
+        raw = metadata.distribution(SDK_DISTRIBUTION).read_text("direct_url.json")
     except metadata.PackageNotFoundError:
-        from socialagent.cli import _version  # noqa: PLC0415 — cli/__init__ imports the command modules
-
-        version = _version()
-    return f"{distribution}=={version}"
-
-
-def _installed_from_index(distribution: str) -> bool:
-    """False when pip records a direct URL: a local wheel, a directory or a VCS checkout."""
+        return None
+    if raw is None:
+        return "index"
     try:
-        return metadata.distribution(distribution).read_text("direct_url.json") is None
-    except metadata.PackageNotFoundError:
-        return False
+        record = json.loads(raw)
+    except ValueError:
+        return None
+    url = record.get("url", "")
+    if "archive_info" in record and url.startswith("file://") and url.endswith(".whl"):
+        return Path(urllib.parse.unquote(urllib.parse.urlparse(url).path))
+    return None
 
 
-def check_sdk_wheel(path: str) -> Path:
-    """The absolute path of the wheel passed to ``--sdk-wheel``, once it is one."""
+def check_sdk_wheel(path: str | Path, flag: str = "--sdk-wheel") -> Path:
+    """The absolute path of an SDK wheel, once it is a smart-socialagent wheel."""
     wheel = Path(path).expanduser().resolve()
     if wheel.suffix != ".whl":
-        raise CliError(f"--sdk-wheel {path}: not a .whl file")
+        raise CliError(f"{flag} {path}: not a .whl file")
     if not wheel.is_file():
-        raise CliError(f"--sdk-wheel {path}: no such file")
+        raise CliError(f"{flag} {path}: no such file")
+    if not wheel.name.startswith(_SDK_WHEEL_PREFIX):
+        raise CliError(
+            f"{flag} {path}: not a {SDK_DISTRIBUTION} wheel (its name must start "
+            f"with {_SDK_WHEEL_PREFIX})"
+        )
     return wheel
 
 
-def sdk_tfvars(tf_dir: Path, wheel: Path | None = None) -> dict[str, str]:
-    """The SDK variables for *tf_dir*: none in a checkout, unless a wheel is given.
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
-    A checkout builds from its own source, and this sets nothing there, so
-    its plan is what it always was. Any other root (the managed copy, or a
-    ``--tf-dir`` with no checkout above it) gets this CLI's spec, and a wheel
-    when given; a wheel given in a checkout selects package mode there too.
+
+def _fetch(url: str) -> bytes:
+    with urllib.request.urlopen(url, timeout=60) as response:  # noqa: S310 — https only, checked by the callers
+        return response.read()
+
+
+def fetch_published_wheel(version: str, project_dir: Path) -> tuple[Path, str]:
+    """Download the one published wheel of *version* and check it against PyPI's sha256.
+
+    The stack then installs this file, uploaded with the Terraform, instead of
+    resolving ``smart-socialagent==<version>`` from the index in CodeBuild: an
+    exact pin fixes the version but not the file, and a wheel added to a
+    published version later (a build tag, another platform) would be picked
+    up by the next build with nothing in the plan showing it. So the release
+    must have exactly one wheel, named for the version with no build tag. The
+    file is kept in ``.socialagent/sdk/`` and reused while its sha256 matches.
+    Returns the path and its sha256.
     """
-    tfvars: dict[str, str] = {}
-    if not sdk_from_checkout(tf_dir):
-        tfvars["sdk_package_spec"] = sdk_package_spec()
+    url = _PYPI_JSON.format(name=SDK_DISTRIBUTION, version=version)
+    try:
+        release = json.loads(_fetch(url))
+    except (OSError, ValueError) as exc:
+        raise CliError(
+            f"could not read {SDK_DISTRIBUTION} {version} from PyPI ({url}): {exc}. "
+            "Deploying outside a SMART checkout installs the published release of "
+            "this CLI's version; pass --sdk-wheel <wheel> to deploy a local build"
+        ) from exc
+    wheels = [
+        f for f in release.get("urls", []) if f.get("packagetype") == "bdist_wheel"
+    ]
+    expected = f"{_SDK_WHEEL_PREFIX}{version}-py3-none-any.whl"
+    if [w.get("filename") for w in wheels] != [expected]:
+        raise CliError(
+            f"{SDK_DISTRIBUTION} {version} on PyPI has the wheels "
+            f"{[w.get('filename') for w in wheels]}, not exactly {expected}; "
+            "refusing to pick one. Pass --sdk-wheel <wheel> to deploy a file you chose"
+        )
+    wheel = wheels[0]
+    sha256 = (wheel.get("digests") or {}).get("sha256", "")
+    file_url = wheel.get("url", "")
+    parsed = urllib.parse.urlparse(file_url)
+    if (
+        not re.fullmatch(r"[0-9a-f]{64}", sha256)
+        or parsed.scheme != "https"
+        or (parsed.hostname != _PYPI_FILES_HOST)
+    ):
+        raise CliError(
+            f"PyPI's record of {expected} has no usable sha256 or an unexpected URL "
+            f"({file_url}); refusing to download it"
+        )
+    dest = _tfvars.work_dir(project_dir) / "sdk" / expected
+    if dest.is_file() and _sha256(dest) == sha256:
+        return dest, sha256
+    try:
+        body = _fetch(file_url)
+    except OSError as exc:
+        raise CliError(f"could not download {file_url}: {exc}") from exc
+    got = hashlib.sha256(body).hexdigest()
+    if got != sha256:
+        raise CliError(
+            f"{expected} from {file_url} has sha256 {got}, but PyPI lists {sha256}; "
+            "not deploying it"
+        )
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    partial = dest.with_suffix(".partial")
+    partial.write_bytes(body)
+    partial.replace(dest)
+    return dest, sha256
+
+
+def sdk_tfvars(
+    tf_dir: Path,
+    wheel: str | Path | None = None,
+    *,
+    project_dir: Path | None = None,
+    build: bool = True,
+) -> dict[str, str]:
+    """The SDK variables for *tf_dir*, decided from how this CLI was installed.
+
+    - ``--sdk-wheel`` given: that wheel, in any root.
+    - A checkout: nothing, so it builds from its own source and its plan is
+      what it always was.
+    - Any other root, for a command that builds (*build*, the deploy): from
+      an index install, the published wheel of this CLI's version, downloaded
+      and checked (:func:`fetch_published_wheel`); from a local wheel, that
+      wheel; from a directory or anything else, refused, because the code
+      running may be no published release.
+    - Any other root, for a command that builds nothing (destroy, config):
+      the spec, so the plan has a source without a download.
+    """
     if wheel is not None:
-        tfvars["sdk_wheel_path"] = str(wheel)
-    return tfvars
+        return {"sdk_wheel_path": str(check_sdk_wheel(wheel))}
+    if sdk_from_checkout(tf_dir):
+        return {}
+    if not build:
+        return {"sdk_package_spec": sdk_package_spec()}
+    origin = _install_origin()
+    if isinstance(origin, Path):
+        return {"sdk_wheel_path": str(check_sdk_wheel(origin, "the CLI's own wheel"))}
+    if origin == "index":
+        if project_dir is None:
+            raise CliError("a project directory is needed to keep the SDK wheel")
+        path, sha256 = fetch_published_wheel(_cli_sdk_version(), project_dir)
+        print(f"SDK: {path.name}, sha256 {sha256[:12]}…, as PyPI lists it")
+        return {"sdk_wheel_path": str(path)}
+    raise CliError(
+        "this CLI was not installed from a package index or a wheel (an editable "
+        "or directory install), so the code it would deploy may match no published "
+        "release. Run the command from a project inside the SMART checkout, or "
+        "pass --sdk-wheel <a wheel built from it>"
+    )
 
 
 def describe_sdk(tfvars: dict[str, str]) -> str | None:
     """One line saying what the layer is installed from, or None for a checkout build."""
     if tfvars.get("sdk_wheel_path"):
         return (
-            f"SDK: the wheel {tfvars['sdk_wheel_path']}, installed in CodeBuild "
-            "with its dependencies from the package index"
+            f"SDK: the wheel {tfvars['sdk_wheel_path']}, uploaded with the stack and "
+            "installed in CodeBuild with its dependencies from the package index"
         )
     spec = tfvars.get("sdk_package_spec")
     if not spec:
         return None
-    line = f"SDK: {spec}, installed in CodeBuild from the package index (wheels only)"
-    distribution = spec.partition("==")[0]
-    if not _installed_from_index(distribution):
-        line += (
-            f"\n! This CLI was not installed from a package index, so {spec} may "
-            "not be published; to deploy this build, pass --sdk-wheel <its wheel>"
-        )
-    return line
+    return f"SDK: {spec}; nothing is built, so the package is not installed"

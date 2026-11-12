@@ -218,7 +218,7 @@ def _cmd_tfvars(args: argparse.Namespace) -> None:
     if not (tf_dir / "variables.tf").is_file():
         raise CliError(f"could not find {tf_dir / 'variables.tf'}; use --tf-dir")
     tfvars = generate_tfvars(
-        load(cfg_path), project_dir, tf_dir, _infra.sdk_tfvars(tf_dir)
+        load(cfg_path), project_dir, tf_dir, _infra.sdk_tfvars(tf_dir, build=False)
     )
     print(json.dumps(tfvars, indent=2))
 

@@ -21,7 +21,7 @@ socialagent dev                    # run it locally, no deployed stack
 
 The `minimal` blueprint runs locally with no AWS at all; the others call Amazon Bedrock, so they need AWS credentials and model access.
 
-**Deploying needs no clone.** The package ships the stack's Terraform, and `socialagent bootstrap` and `socialagent deploy` run a copy of it that the CLI writes into the project's `.socialagent/infra/` (managed by the CLI: edits there are overwritten). With no clone, the stack's Lambda layer and template sync install this package, at the CLI's own version, from PyPI inside your account, so a version deploys this way once it is published. The getting-started guide walks through it.
+**Deploying needs no clone.** The package ships the stack's Terraform, and `socialagent bootstrap` and `socialagent deploy` run a copy of it that the CLI writes into the project's `.socialagent/infra/` (managed by the CLI: edits there are overwritten). With no clone, `deploy` downloads this package's wheel at the CLI's own version, checks it against the sha256 PyPI lists, and the stack's Lambda layer and template sync install that file, so a version deploys this way once it is published. The getting-started guide walks through it.
 
 ## Links
 

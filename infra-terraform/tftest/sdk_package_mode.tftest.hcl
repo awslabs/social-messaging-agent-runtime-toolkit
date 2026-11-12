@@ -205,6 +205,26 @@ run "a_bare_name_is_not_a_spec" {
   expect_failures = [var.sdk_package_spec]
 }
 
+run "another_distribution_is_not_a_spec" {
+  command = plan
+
+  variables {
+    sdk_package_spec = "smart-socialagent-extra==2026.10.0"
+  }
+
+  expect_failures = [var.sdk_package_spec]
+}
+
+run "another_distributions_wheel_is_refused" {
+  command = plan
+
+  variables {
+    sdk_wheel_path = "tftest/fixtures/other_package-0.0.0-py3-none-any.whl"
+  }
+
+  expect_failures = [var.sdk_wheel_path]
+}
+
 run "a_wheel_must_be_a_wheel_file" {
   command = plan
 

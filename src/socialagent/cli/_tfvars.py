@@ -22,8 +22,9 @@ Rules:
   set out of band with ``socialagent secrets set``.
 - ``sdk`` (from ``_infra.sdk_tfvars``) names the package a root with no
   checkout above it installs the SDK from. It is set only where Terraform
-  declares the variable, and a ``terraform:`` entry for the same variable
-  wins.
+  declares the variable. A ``terraform:`` entry may not set it: the CLI
+  decides the SDK's source from how it was installed, and
+  ``deploy --sdk-wheel`` is the way to choose another.
 - ``terraform:`` entries pass through verbatim. A key that is not a variable
   in ``infra-terraform/variables.tf`` is an error, so a typo fails here
   instead of being ignored.
@@ -45,6 +46,9 @@ _PATH_FIELDS = {
     "agent.handlers_dir": "handlers",
     "whatsapp.templates": None,  # no default: "" disables template sync
 }
+
+# Set by the CLI (``_infra.sdk_tfvars``), never by the YAML.
+_SDK_VARIABLES = frozenset({"sdk_package_spec", "sdk_wheel_path"})
 
 _VARIABLE_RE = re.compile(r'^variable\s+"(\w+)"\s*\{(.*?)^\}', re.S | re.M)
 
@@ -118,6 +122,15 @@ def generate(
     tfvars.update({k: v for k, v in (sdk or {}).items() if k in known})
 
     passthrough = config.get("terraform") or {}
+    reserved = sorted(set(passthrough) & _SDK_VARIABLES)
+    if reserved:
+        raise ConfigError(
+            "terraform: "
+            + ", ".join(reserved)
+            + " cannot be set here: the CLI chooses the SDK the stack installs "
+            "from how it was installed. To deploy another build, pass "
+            "`socialagent deploy --sdk-wheel <wheel>`"
+        )
     unknown = sorted(set(passthrough) - set(known))
     if unknown:
         raise ConfigError(

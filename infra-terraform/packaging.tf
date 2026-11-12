@@ -26,14 +26,15 @@
 # =============================================================================
 
 locals {
-  # A checkout keeps pyproject.toml next to infra-terraform/; nothing else
-  # that runs this root has one there. Setting sdk_package_spec or
+  # A checkout keeps pyproject.toml and src/socialagent/ next to
+  # infra-terraform/, the same test as the CLI's _is_checkout; nothing else
+  # that runs this root has both there. Setting sdk_package_spec or
   # sdk_wheel_path selects package mode even in a checkout, so a contributor
   # can deploy a published or built package, and the mocked plan tests in
   # tftest/ can plan package mode from the repo. Every file() and fileset() on
   # the repo tree below is behind this test, so a package-mode plan never
   # reads a path that does not exist.
-  sdk_from_checkout = fileexists("${path.root}/../pyproject.toml") && var.sdk_package_spec == "" && var.sdk_wheel_path == ""
+  sdk_from_checkout = fileexists("${path.root}/../pyproject.toml") && length(fileset("${path.root}/../src/socialagent", "*.py")) > 0 && var.sdk_package_spec == "" && var.sdk_wheel_path == ""
 
   repo_root           = "${path.root}/.."
   socialagent_sdk_dir = "${local.repo_root}/src/socialagent"

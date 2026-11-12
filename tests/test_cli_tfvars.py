@@ -200,13 +200,16 @@ def test_sdk_variables_are_dropped_for_a_root_without_them(checkout):
     assert "sdk_package_spec" not in out
 
 
-def test_a_terraform_entry_overrides_the_clis_spec(checkout):
+@pytest.mark.parametrize("key", ["sdk_package_spec", "sdk_wheel_path"])
+def test_a_terraform_entry_may_not_choose_the_sdk(checkout, key):
+    # The CLI decides the SDK's source from how it was installed; a YAML key
+    # would let a project's file put another package in the Lambdas.
     project, tf = checkout
-    config = {**_BASE, "terraform": {"sdk_package_spec": "smart-socialagent==2026.9.0"}}
-    out = generate(
-        config, project, tf, {"sdk_package_spec": "smart-socialagent==2026.10.0"}
-    )
-    assert out["sdk_package_spec"] == "smart-socialagent==2026.9.0"
+    config = {**_BASE, "terraform": {key: "smart-socialagent==2026.9.0"}}
+    with pytest.raises(ConfigError, match=f"{key} cannot be set here"):
+        generate(
+            config, project, tf, {"sdk_package_spec": "smart-socialagent==2026.10.0"}
+        )
 
 
 def test_write_carries_the_sdk_variables(checkout):

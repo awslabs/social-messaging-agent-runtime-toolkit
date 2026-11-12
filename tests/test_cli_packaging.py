@@ -538,7 +538,9 @@ run "the_spec_alone_builds_the_layer" {
 
 
 @pytest.mark.slow
-def test_pip_installed_cli_runs_its_own_terraform(installed_cli: Path, tmp_path: Path):
+def test_pip_installed_cli_runs_its_own_terraform(
+    installed_cli: Path, built_wheel: Path, tmp_path: Path
+):
     """With no checkout, the installed CLI deploys from the Terraform it ships.
 
     ``config tfvars`` reads it in place and writes nothing; commands that run
@@ -588,7 +590,7 @@ def test_pip_installed_cli_runs_its_own_terraform(installed_cli: Path, tmp_path:
 
         _deploy.deploy(args, runner=runner, account="123456789012")
         written = Path(".socialagent/mybot-dev.tfvars.json").read_text()
-        print("spec:", json.loads(written)["sdk_package_spec"])
+        print("wheel:", json.loads(written)["sdk_wheel_path"])
         print("planned:", any("plan" in c for c in calls))
         """
     )
@@ -605,7 +607,8 @@ def test_pip_installed_cli_runs_its_own_terraform(installed_cli: Path, tmp_path:
     assert (copy / "main.tf").is_file() and (copy / "bootstrap" / "main.tf").is_file()
     assert not (copy.parent / "pyproject.toml").exists()
     assert "edits there are overwritten" in resolved.stderr
-    assert f"spec: {spec}" in lines
+    # Installed from a local wheel, the CLI deploys that same wheel.
+    assert f"wheel: {built_wheel.resolve()}" in lines
     assert lines[-1] == "planned: True"
 
     terraform = shutil.which("terraform")

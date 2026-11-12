@@ -847,9 +847,8 @@ def deploy(args: Any, runner: Runner = run, account: str | None = None) -> None:
     if runner is run:
         require_on_path("deploy", "terraform", *(() if args.plan else ("aws",)))
     stack = resolve(args.env, args.tf_dir, account)
-    wheel = getattr(args, "sdk_wheel", None)
     sdk = _infra.sdk_tfvars(
-        stack.tf_dir, _infra.check_sdk_wheel(wheel) if wheel else None
+        stack.tf_dir, getattr(args, "sdk_wheel", None), project_dir=stack.project_dir
     )
     _check_no_auto_loaded_tfvars(stack)
     warn_if_stale(stack.project_dir)
@@ -943,7 +942,7 @@ def destroy(args: Any, runner: Runner = run, account: str | None = None) -> None
 
     # A destroy plans too, and a root with no checkout above it needs a spec to
     # plan; a wheel a deploy used is not needed, as nothing is built.
-    sdk = _infra.sdk_tfvars(stack.tf_dir)
+    sdk = _infra.sdk_tfvars(stack.tf_dir, build=False)
     var_file = _tfvars.write(stack.config, stack.project_dir, stack.tf_dir, sdk)
     _init(stack, runner)
     # select, never create: destroying a workspace that does not exist is a typo.
