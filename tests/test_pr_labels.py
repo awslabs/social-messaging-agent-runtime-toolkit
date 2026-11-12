@@ -85,19 +85,20 @@ def test_labeler_uses_only_options_it_reads():
     assert [list(entry) for entry in labeler["docs-only"]] == [["all"]]
 
 
-def test_every_top_level_directory_has_a_label():
-    """A directory labeler.yml does not name leaves a pull request that changes only it unlabelled."""
+def test_every_top_level_path_has_a_label():
+    """A directory or file labeler.yml does not name leaves a pull request that changes only it unlabelled."""
     tracked = subprocess.run(
         ["git", "ls-files"], cwd=ROOT, capture_output=True, check=True, text=True
     ).stdout.splitlines()
-    globs = [
-        g
+    named = {
+        name
         for entries in _labeler().values()
-        for g in _globs(entries)
-        if not g.startswith("!")
-    ]
-    directories = {path.split("/")[0] for path in tracked if "/" in path}
-    unlabelled = sorted(
-        d for d in directories if not any(f"{d}/**" in g for g in globs)
-    )
+        for glob in _globs(entries)
+        if not glob.startswith("!")
+        for name in re.split(r"[{},]", glob)
+    }
+    directories = {path.split("/")[0] + "/**" for path in tracked if "/" in path}
+    # Markdown at the root is docs-only through "**/*.md" unless named.
+    files = {path for path in tracked if "/" not in path and not path.endswith(".md")}
+    unlabelled = sorted((directories | files) - named)
     assert unlabelled == [], f"add {unlabelled} to a label in .github/labeler.yml"
