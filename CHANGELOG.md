@@ -4,6 +4,9 @@ All notable changes to SMART, the Social Messaging Agent Runtime Toolkit, are re
 
 ## [Unreleased]
 
+### Developer experience
+- A Labels workflow labels each pull request `docs-only`, `infra`, `runtime`, `console` or `ci` from the files it changes (`.github/labeler.yml`), so a reviewer sees what kind of review it needs before opening it; `CODEOWNERS` still routes by path. It runs on `pull_request_target` so pull requests from forks get labels too, checks out nothing, and can only read contents and write pull requests, so the five labels must exist in the repository before it runs.
+
 ## [2026.11.0] - 2026-11-13
 
 **Upgrading a project.** The agent runtime changed in this release (outbound reactions), and a project's `socialagent_runtime/` is a copy made by `socialagent init`, so it keeps the old one until it is replaced. A CLI installed from PyPI has no git history to tell an earlier copy from a later or edited one, so `socialagent runtime status` reports the copy as `unknown` and `socialagent runtime update` refuses it: run `socialagent runtime update --force`, which keeps a backup under `.socialagent/runtime-backups/`.
