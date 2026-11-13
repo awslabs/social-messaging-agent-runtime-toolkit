@@ -78,6 +78,32 @@ jobs:
       # Excludes the wheel-build/venv-install tests, which run in `packaging`.
       - run: uv run --frozen pytest -m "not slow"
 
+  # Resolves [project].dependencies alone at their declared floors (without the
+  # dev group, which lifts boto3) so an under-specified runtime bound fails here
+  # before a pip-installed user hits a missing service or operation.
+  runtime-floors:
+    name: runtime-floors (py3.11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          enable-cache: true
+          python-version: "3.11"
+      - name: resolve and install runtime dependencies at their floors
+        run: |
+          uv pip compile pyproject.toml --resolution lowest-direct -o "$RUNNER_TEMP/floor-requirements.txt"
+          uv venv "$RUNNER_TEMP/floor-venv" --python 3.11
+          uv pip install --python "$RUNNER_TEMP/floor-venv/bin/python" -r "$RUNNER_TEMP/floor-requirements.txt"
+          uv pip install --python "$RUNNER_TEMP/floor-venv/bin/python" -c "$RUNNER_TEMP/floor-requirements.txt" pytest
+          uv pip install --python "$RUNNER_TEMP/floor-venv/bin/python" --no-deps .
+      - name: verify runtime floor compatibility
+        run: |
+          "$RUNNER_TEMP/floor-venv/bin/pytest" -c /dev/null --noconftest -p no:cacheprovider tests/test_runtime_floors.py
+
   packaging:
     name: packaging (pip install)
     runs-on: ubuntu-latest

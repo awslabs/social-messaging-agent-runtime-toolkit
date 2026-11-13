@@ -23,7 +23,9 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Application Frameworks",
 ]
 dependencies = [
-    "boto3>=1.38.0",
+    # 1.39.7 adds the bedrock-agentcore client; 1.39.14 adds the socialmessaging
+    # WhatsApp template operations (list/create/delete_whatsapp_message_template).
+    "boto3>=1.39.14",
     "cryptography>=46.0.5",
     "pyyaml>=6.0.3",
     "rich>=14.3.3",
