@@ -102,7 +102,6 @@ export interface WhatsAppTemplate {
   checked?: boolean;
   language: string;
   approvalStatus: "approved" | "pending" | "rejected";
-  lastSynced: string;
 }
 
 export interface TemplateHealth {

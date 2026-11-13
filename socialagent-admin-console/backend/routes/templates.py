@@ -7,7 +7,6 @@ from __future__ import annotations
 import json
 import re
 import time
-from datetime import UTC, datetime
 
 import boto3
 from aws_lambda_powertools import Logger, Tracer
@@ -421,7 +420,6 @@ def handle_get_templates(params, _body):
                 "checked": tpl is not None,
                 "language": t.get("templateLanguage", "en"),
                 "approvalStatus": t.get("templateStatus", "PENDING").lower(),
-                "lastSynced": str(datetime.now(UTC)),
             })
         return _json(200, templates)
     except Exception:

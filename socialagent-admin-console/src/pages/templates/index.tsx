@@ -97,7 +97,6 @@ export default function TemplatesPage({ navigate }: { navigate: (href: string) =
           ) },
           { id: "language", header: "Language", minWidth: 100, cell: (t) => t.language },
           { id: "approval", header: "Meta approval status", minWidth: 180, cell: (t) => <StatusIndicator type={approvalType(t.approvalStatus)}>{t.approvalStatus}</StatusIndicator> },
-          { id: "synced", header: "Last synced", minWidth: 160, cell: (t) => t.lastSynced },
           { id: "actions", header: "Actions", minWidth: 80, cell: (t) => <ButtonDropdown variant="inline-icon" expandToViewport items={[{ id: "preview", text: "Preview" }, { id: "stack", text: "Go to stack" }]} onItemClick={({ detail }) => { if (detail.id === "preview") setPreviewTemplate({ stack: t.stack, name: t.name }); else navigate(`#/stacks/${t.stack}`); }} /> },
         ]}
         header={
