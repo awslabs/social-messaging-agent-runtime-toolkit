@@ -286,13 +286,22 @@ def test_init_update_flag_is_unrecognized(monkeypatch, capsys):
 _VENDOR_RULE_DIRS = (".amazonq", ".kiro", ".clinerules", ".cursor", ".windsurf")
 
 
+# A file only that blueprint ships, so a case that scaffolds the wrong blueprint fails.
+_BLUEPRINT_MARKERS = {
+    "personal-assistant": "src/skills/memory.md",
+    "appointment-scheduler": "src/catalog.py",
+}
+
+
 @pytest.mark.parametrize(
     "blueprint", ["minimal", "personal-assistant", "appointment-scheduler"]
 )
 def test_init_gives_ai_tools_one_rules_file(tmp_project, blueprint):
     """A scaffolded project carries AGENTS.md and CLAUDE.md, and no vendor rule dir."""
-    cmd_init(_args(name="my-agent", template=blueprint))
+    cmd_init(_args(name="my-agent", blueprint=blueprint))
     project = tmp_project / "my-agent"
+    for owner, marker in _BLUEPRINT_MARKERS.items():
+        assert (project / marker).exists() == (owner == blueprint), marker
     agents = (project / "AGENTS.md").read_text()
     assert "## Rules for AI assistants" in agents
     # Claude Code reads CLAUDE.md; a one-line import keeps AGENTS.md the one file.
