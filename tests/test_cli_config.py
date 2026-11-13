@@ -17,10 +17,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
 import textwrap
+from pathlib import Path
 
 import pytest
 import yaml
@@ -461,3 +463,57 @@ def test_config_unknown_subcommand_exits_nonzero(project):
     with pytest.raises(SystemExit) as exc:
         cmd_config(_args("bogus"), _parser())
     assert exc.value.code == 1
+
+
+def test_config_tfvars_accepts_custom_tf_dir_without_variables_tf(
+    tmp_path, monkeypatch, capsys
+):
+    project_dir = tmp_path / "mybot"
+    (project_dir / "handlers").mkdir(parents=True)
+    tf_dir = tmp_path / "custom-tf"
+    tf_dir.mkdir()
+    (tf_dir / "main.tf").write_text("# custom root\n")
+
+    vars_text = (
+        Path(__file__).resolve().parents[1] / "infra-terraform" / "variables.tf"
+    ).read_text(encoding="utf-8")
+    pat = r'variable "enable_deployment_metrics" \{.*?^\}\n'
+    match = re.search(pat, vars_text, re.S | re.M)
+    assert match is not None
+    (tf_dir / "base.tf").write_text(
+        re.sub(pat, "", vars_text, flags=re.S | re.M), encoding="utf-8"
+    )
+    (tf_dir / "metrics.tf").write_text(match.group(0), encoding="utf-8")
+
+    monkeypatch.chdir(project_dir)
+    (project_dir / "socialagent.dev.yaml").write_text(
+        "schema_version: 3\n"
+        "project: mybot\n"
+        "environment: dev\n"
+        "region: us-east-1\n"
+        "terraform:\n"
+        "  enable_deployment_metrics: false\n",
+        encoding="utf-8",
+    )
+
+    cmd_config(_args("tfvars", tf_dir=str(tf_dir)), _parser())
+    out = json.loads(capsys.readouterr().out)
+    assert out["enable_deployment_metrics"] is False
+
+
+def test_config_tfvars_refuses_dir_without_tf_files(tmp_path, monkeypatch):
+    project_dir = tmp_path / "mybot"
+    project_dir.mkdir()
+    empty_tf = tmp_path / "empty-tf"
+    empty_tf.mkdir()
+    monkeypatch.chdir(project_dir)
+    (project_dir / "socialagent.dev.yaml").write_text(
+        "schema_version: 3\nproject: mybot\nenvironment: dev\nregion: us-east-1\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(CliError, match="no main.tf there"):
+        cmd_config(_args("tfvars", tf_dir=str(empty_tf)), _parser())
+
+    monkeypatch.setattr(_infra, "find_tf_dir", lambda *args, **kwargs: empty_tf)
+    with pytest.raises(CliError, match="could not find Terraform files"):
+        cmd_config(_args("tfvars", tf_dir=""), _parser())

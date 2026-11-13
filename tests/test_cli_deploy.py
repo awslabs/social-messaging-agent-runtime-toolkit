@@ -1036,13 +1036,28 @@ _METRICS_DOCS = (
 )
 
 
+# Exact settled opt-out form each doc in _METRICS_DOCS must show so an edit
+# cannot drift to another spelling or value syntax.
+_OPT_OUT_YAML_BLOCK = (
+    f"```yaml\nterraform:\n  {_deploy.DEPLOYMENT_METRICS_VARIABLE}: false\n```"
+)
+_OPT_OUT_FORMS = {
+    "README.md": (
+        f"> ```yaml\n> terraform:\n>   {_deploy.DEPLOYMENT_METRICS_VARIABLE}: false\n> ```"
+    ),
+    "infra-terraform/README.md": _OPT_OUT_YAML_BLOCK,
+    "docs/getting-started.md": _OPT_OUT_YAML_BLOCK,
+    "docs/configuration.md": f"`{_deploy.DEPLOYMENT_METRICS_VARIABLE}: false`",
+}
+
+
 def test_every_doc_names_the_real_opt_out_variable():
-    """The key the docs tell a deployer to set is a variable in variables.tf,
-    with the default the notice relies on, and one the YAML schema accepts
-    under `terraform:`."""
+    """The key the docs tell a deployer to set is a variable in the Terraform
+    directory, with the default the notice relies on, one the YAML schema
+    accepts under `terraform:`, and every doc carries its settled opt-out form."""
     key = _deploy.DEPLOYMENT_METRICS_VARIABLE
     tf = REPO_ROOT / "infra-terraform"
-    assert key in _tfvars.terraform_variables(tf), f"{key} is not in variables.tf"
+    assert key in _tfvars.terraform_variables(tf), f"{key} is not in {tf}"
     assert _tfvars.variable_default(tf, key) == "true"
     config = {
         "schema_version": 3,
@@ -1052,8 +1067,22 @@ def test_every_doc_names_the_real_opt_out_variable():
         "terraform": {key: False},
     }
     assert _schema.validate(config) == [], "the schema refuses the opt-out key"
+    assert set(_OPT_OUT_FORMS) == set(_METRICS_DOCS)
     for doc in _METRICS_DOCS:
-        assert key in (REPO_ROOT / doc).read_text(), f"{doc} does not name {key}"
+        text = (REPO_ROOT / doc).read_text(encoding="utf-8")
+        assert key in text, f"{doc} does not name {key}"
+        assert _OPT_OUT_FORMS[doc] in text, (
+            f"{doc} does not carry the expected opt-out form"
+        )
+    config_rows = [
+        line
+        for line in (REPO_ROOT / "docs/configuration.md")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.startswith(f"| `{key}` | `true` |")
+    ]
+    assert len(config_rows) == 1
+    assert _OPT_OUT_FORMS["docs/configuration.md"] in config_rows[0]
     # The CLI's own notice names the same key, so a rename cannot leave it behind.
     assert key in OPT_OUT_KEY
 
@@ -1115,3 +1144,116 @@ def test_metrics_disclosure_links_the_aws_privacy_policy(doc, heading):
     text = (REPO_ROOT / doc).read_text()
     section = text.split(heading, 1)[1].split("\n## ", 1)[0]
     assert _PRIVACY_POLICY_SENTENCE in section, f"{doc} {heading} lacks the link"
+
+
+def test_marker_notice_recognizes_variable_in_non_variables_tf(checkout, capsys):
+    """When enable_deployment_metrics is declared in a .tf file other than
+    variables.tf, the deployment counter notice still displays properly, and
+    defining it under terraform: in configuration YAML does not raise ConfigError."""
+    project, tf = checkout
+    config = yaml.safe_load((project / "socialagent.dev.yaml").read_text())
+
+    # Move enable_deployment_metrics from variables.tf to metrics.tf
+    variables = tf / "variables.tf"
+    text = variables.read_text()
+    pattern = r'variable "enable_deployment_metrics" \{.*?^\}\n'
+    match = re.search(pattern, text, re.S | re.M)
+    assert match is not None
+    decl = match.group(0)
+    variables.write_text(re.sub(pattern, "", text, flags=re.S | re.M))
+
+    metrics_tf = tf / "metrics.tf"
+    metrics_tf.write_text(decl)
+
+    # Recognizes variable and default from metrics.tf
+    assert _deploy.deployment_metrics_enabled(config, tf) is True
+
+    # Notice displays properly
+    stack = _deploy.Stack(
+        config=config,
+        project_dir=project,
+        cfg_path=project / "socialagent.dev.yaml",
+        tf_dir=tf,
+        workspace="my-bot-dev",
+        backend={},
+    )
+    _deploy.notice_deployment_metrics(stack)
+    out = capsys.readouterr().out
+    assert "Anonymous deployment counter:" in out
+
+    # Setting under terraform: in YAML does not raise ConfigError
+    cfg_with_tf = {**config, "terraform": {_deploy.DEPLOYMENT_METRICS_VARIABLE: False}}
+    assert _deploy.deployment_metrics_enabled(cfg_with_tf, tf) is False
+    tfvars = _tfvars.generate(cfg_with_tf, project, tf)
+    assert tfvars[_deploy.DEPLOYMENT_METRICS_VARIABLE] is False
+
+    # Declaring default = false in metrics.tf disables notice without YAML config
+    metrics_tf.write_text(re.sub(r"default\s*=\s*true", "default = false", decl))
+    assert _deploy.deployment_metrics_enabled(config, tf) is False
+
+
+def test_custom_tf_dir_with_variables_in_other_tf_file(checkout, capsys):
+    """A custom --tf-dir with variables split across multiple non-variables.tf
+    files plans, deploys, and controls the marker notice without raising
+    ConfigError, including when setting enable_deployment_metrics under
+    terraform: in YAML."""
+    project, tf = checkout
+    custom_tf = project.parent / "custom-terraform"
+    custom_tf.mkdir()
+    (custom_tf / "main.tf").write_text((tf / "main.tf").read_text())
+
+    # Split variables across two separate files, neither named variables.tf
+    vars_text = (tf / "variables.tf").read_text()
+    marker_pat = r'variable "enable_deployment_metrics" \{.*?^\}\n'
+    marker_match = re.search(marker_pat, vars_text, re.S | re.M)
+    assert marker_match is not None
+    marker_decl = marker_match.group(0)
+    rest_decls = re.sub(marker_pat, "", vars_text, flags=re.S | re.M)
+
+    (custom_tf / "base.tf").write_text(rest_decls)
+    (custom_tf / "custom_metrics.tf").write_text(marker_decl)
+
+    # Deploy with default config: notice prints and deploy succeeds
+    runner = FakeRunner()
+    args = _args(tf_dir=str(custom_tf), skip_model_check=True)
+    _deploy.deploy(args, runner=runner, account=ACCOUNT)
+    assert NOTICE_LABEL in capsys.readouterr().out
+    assert "plan" in runner.verbs()
+    assert "apply" in runner.verbs()
+
+    # Deploy with enable_deployment_metrics under terraform: in YAML
+    (project / "socialagent.dev.yaml").write_text(
+        "schema_version: 3\n"
+        "project: my-bot\n"
+        "environment: dev\n"
+        "region: us-east-1\n"
+        "outputs: {}\n"
+        "terraform:\n"
+        "  enable_deployment_metrics: false\n"
+    )
+    runner2 = FakeRunner()
+    _deploy.deploy(args, runner=runner2, account=ACCOUNT)
+    assert NOTICE_LABEL not in capsys.readouterr().out
+    assert "plan" in runner2.verbs()
+    assert "apply" in runner2.verbs()
+
+
+def test_override_files_control_deployment_metrics(checkout):
+    """override.tf and z_override.tf override enable_deployment_metrics default."""
+    project, tf = checkout
+    config = yaml.safe_load((project / "socialagent.dev.yaml").read_text())
+    assert _deploy.deployment_metrics_enabled(config, tf) is True
+
+    z_override = tf / "z_override.tf"
+    z_override.write_text(
+        'variable "enable_deployment_metrics" {\n  default = false\n}\n'
+    )
+    assert _deploy.deployment_metrics_enabled(config, tf) is False
+
+    z_override.unlink()
+    assert _deploy.deployment_metrics_enabled(config, tf) is True
+
+    (tf / "override.tf").write_text(
+        'variable "enable_deployment_metrics" {\n  default = false\n}\n'
+    )
+    assert _deploy.deployment_metrics_enabled(config, tf) is False
