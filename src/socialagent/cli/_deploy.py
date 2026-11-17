@@ -789,7 +789,7 @@ DEPLOYMENT_METRICS_VARIABLE = "enable_deployment_metrics"
 
 
 def _reads_as_false(value: Any) -> bool:
-    """Whether a YAML, environment or ``variables.tf`` value says Terraform's ``false``.
+    """Whether a YAML, environment or Terraform file value says Terraform's ``false``.
 
     Terraform accepts ``"false"`` and ``(false)`` for a bool; anything that does
     not read as false counts as on, so a form this does not recognise errs towards
@@ -808,7 +808,7 @@ def deployment_metrics_enabled(config: dict[str, Any], tf_dir: Path) -> bool:
     The YAML's ``terraform.enable_deployment_metrics`` decides when it is set,
     since the generated var file outranks the environment. Unset,
     ``TF_VAR_enable_deployment_metrics`` does, and then the variable's own default
-    in ``tf_dir/variables.tf``, read there rather than assumed. A sibling copy of
+    in ``tf_dir`` (read from its ``*.tf`` files rather than assumed). A sibling copy of
     the Terraform that drops the variable creates no marker, so it gets no notice.
     """
     if DEPLOYMENT_METRICS_VARIABLE not in _tfvars.terraform_variables(tf_dir):

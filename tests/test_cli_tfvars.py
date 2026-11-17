@@ -12,7 +12,13 @@ import pytest
 
 from socialagent.cli import _schema
 from socialagent.cli._errors import ConfigError
-from socialagent.cli._tfvars import generate, terraform_variables, tfvars_path, write
+from socialagent.cli._tfvars import (
+    generate,
+    terraform_variables,
+    tfvars_path,
+    variable_default,
+    write,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REAL_TF = REPO_ROOT / "infra-terraform"
@@ -178,3 +184,90 @@ def test_write_creates_gitignored_json(checkout):
     assert path.name == "my-bot-dev.tfvars.json"
     assert json.loads(path.read_text())["project_name"] == "my-bot"
     assert (path.parent / ".gitignore").read_text().strip().endswith("*")
+
+
+def test_parses_variables_from_multiple_tf_files(tmp_path):
+    tf = tmp_path / "tf"
+    tf.mkdir()
+    (tf / "a.tf").write_text('variable "var_a" {\n  type = string\n}\n')
+    (tf / "b.tf").write_text(
+        'variable "var_b" {\n  type = string\n  default = "hello"\n}\n'
+    )
+    vars_found = terraform_variables(tf)
+    assert vars_found == {"var_a": True, "var_b": False}
+    assert variable_default(tf, "var_a") is None
+    assert variable_default(tf, "var_b") == '"hello"'
+
+
+def test_terraform_block_with_variable_in_non_variables_tf(checkout):
+    project, tf = checkout
+    (tf / "extra.tf").write_text(
+        'variable "custom_flag" {\n  type = bool\n  default = false\n}\n'
+    )
+    out = generate({**_BASE, "terraform": {"custom_flag": True}}, project, tf)
+    assert out["custom_flag"] is True
+
+
+def test_required_variable_in_non_variables_tf(checkout):
+    project, tf = checkout
+    (tf / "required.tf").write_text(
+        'variable "mandatory_setting" {\n  type = string\n}\n'
+    )
+    with pytest.raises(
+        ConfigError, match="required Terraform variables not set: mandatory_setting"
+    ):
+        generate(_BASE, project, tf)
+    out = generate({**_BASE, "terraform": {"mandatory_setting": "val"}}, project, tf)
+    assert out["mandatory_setting"] == "val"
+
+
+def test_unknown_variable_names_tf_dir(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    tf = tmp_path / "tf"
+    tf.mkdir()
+    (tf / "variables.tf").write_text('variable "base_var" {\n  default = "x"\n}\n')
+    (tf / "extra.tf").write_text('variable "ok_var" {\n  default = "yes"\n}\n')
+    with pytest.raises(ConfigError, match=f"unknown_var is not a variable in {tf}"):
+        generate({**_BASE, "terraform": {"unknown_var": "val"}}, project, tf)
+
+
+def test_override_files_take_precedence(tmp_path):
+    """override.tf and *_override.tf are applied after all regular *.tf files."""
+    tf = tmp_path / "tf"
+    tf.mkdir()
+    (tf / "variables.tf").write_text(
+        'variable "from_a_override" {\n  default = "base"\n}\n'
+        'variable "from_z_override" {\n  default = "base"\n}\n'
+        'variable "from_plain_override" {\n  default = "base"\n}\n'
+        'variable "required_then_defaulted" {}\n'
+    )
+    (tf / "a_override.tf").write_text(
+        'variable "from_a_override" {\n  default = "a_override"\n}\n'
+    )
+    (tf / "z_override.tf").write_text(
+        'variable "from_z_override" {\n  default = "z_override"\n}\n'
+    )
+    (tf / "override.tf").write_text(
+        'variable "from_plain_override" {\n  default = "plain_override"\n}\n'
+        'variable "required_then_defaulted" {\n  default = "provided"\n}\n'
+    )
+
+    assert variable_default(tf, "from_a_override") == '"a_override"'
+    assert variable_default(tf, "from_z_override") == '"z_override"'
+    assert variable_default(tf, "from_plain_override") == '"plain_override"'
+    assert variable_default(tf, "required_then_defaulted") == '"provided"'
+    assert terraform_variables(tf)["required_then_defaulted"] is False
+
+
+def test_override_without_default_preserves_earlier_default(tmp_path):
+    """An override block without default merges attributes without dropping default."""
+    tf = tmp_path / "tf"
+    tf.mkdir()
+    (tf / "variables.tf").write_text('variable "kept" {\n  default = "orig"\n}\n')
+    (tf / "override.tf").write_text(
+        'variable "kept" {\n  description = "overridden description"\n}\n'
+    )
+
+    assert variable_default(tf, "kept") == '"orig"'
+    assert terraform_variables(tf)["kept"] is False

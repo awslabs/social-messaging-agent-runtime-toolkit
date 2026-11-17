@@ -4,6 +4,9 @@ All notable changes to SMART, the Social Messaging Agent Runtime Toolkit, are re
 
 ## [Unreleased]
 
+### Fixed
+- `socialagent deploy` and `socialagent config tfvars` now read variable declarations and defaults from every `*.tf` file in the Terraform directory (with `override.tf` and `*_override.tf` applied last) rather than only `variables.tf`, so a `--tf-dir` copy that defines `enable_deployment_metrics` (or any other variable) in another `.tf` file keeps the deployment-counter notice accurate and accepts it under `terraform:` in `socialagent.<env>.yaml`.
+
 ## [2026.11.0] - 2026-11-13
 
 **Upgrading a project.** The agent runtime changed in this release (outbound reactions), and a project's `socialagent_runtime/` is a copy made by `socialagent init`, so it keeps the old one until it is replaced. A CLI installed from PyPI has no git history to tell an earlier copy from a later or edited one, so `socialagent runtime status` reports the copy as `unknown` and `socialagent runtime update` refuses it: run `socialagent runtime update --force`, which keeps a backup under `.socialagent/runtime-backups/`.

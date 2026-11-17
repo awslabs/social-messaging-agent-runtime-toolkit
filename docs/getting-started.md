@@ -158,7 +158,14 @@ socialagent status           # runtime ARN, memory id, event API URL, ...
 
 `deploy` plans to a file, inspects the plan, and applies that same file, so what you reviewed is what runs. If the plan would **destroy or replace a resource that holds the stack's data** (an S3 bucket, the DynamoDB state table, the AgentCore Memory, a secret), it stops and says which: the data does not move with the resource, and this usually means a change of bucket layout, state prefix or workspace rather than something you meant. `--plan` shows the same warning without stopping. If the loss is intended, `deploy --yes --accept-data-loss` applies it.
 
-The stack also includes the **anonymous deployment counter**: a deployment marker stack, `<env>-<project>-deployment-metrics`, holding one SSM parameter with an anonymous tracking code so AWS can count deployments of this solution, and nothing about usage, messages or customers. `deploy` prints one line about it while it is on. To turn it off, set `enable_deployment_metrics: false` under `terraform:` in `socialagent.dev.yaml`; the README's [Anonymous Operational Metrics](../README.md#anonymous-operational-metrics) lists exactly what is emitted.
+The stack also includes the **anonymous deployment counter**: a deployment marker stack, `<env>-<project>-deployment-metrics`, holding one SSM parameter with an anonymous tracking code so AWS can count deployments of this solution, and nothing about usage, messages or customers. `deploy` prints one line about it while it is on. To turn it off, set `enable_deployment_metrics: false` under `terraform:` in `socialagent.dev.yaml`:
+
+```yaml
+terraform:
+  enable_deployment_metrics: false
+```
+
+The README's [Anonymous Operational Metrics](../README.md#anonymous-operational-metrics) lists exactly what is emitted.
 
 Each project + environment is its own stack with its own Terraform workspace (`<project>-<env>` unless `state.workspace` says otherwise). For another environment, create `socialagent.prod.yaml` with `environment: prod` in it and pass `--env prod`. `--env` only picks the file; the stack comes from its `environment:`, so every command refuses a file whose `environment:` differs from `--env` (a copied dev file would otherwise act on the dev stack). To see exactly which Terraform variables a config produces, run `socialagent config tfvars`. Secret values are never written to the file: list their names under `secrets:` and set them with `socialagent secrets set <name> --key <key>`.
 
