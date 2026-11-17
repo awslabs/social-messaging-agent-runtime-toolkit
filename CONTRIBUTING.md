@@ -46,7 +46,7 @@ Pull requests from outside contributors are reviewed by the project maintainers,
 
 Issues and pull requests are triaged within five business days: labelled, and either answered, assigned, or closed with the reason. Beyond that, response time is best effort. A pull request that passes the checks and has an approving review from a code owner is merged by a maintainer (one from an outside contributor also gets the second review described in [Reviewing a pull request](#reviewing-a-pull-request-maintainers)); one that goes a month without a response from its author after a review is closed, and can be reopened. There is no stale bot; a maintainer closes it and says why.
 
-Reviews route automatically: `.github/CODEOWNERS` names the four maintainers, by GitHub login, for every part of the tree, and the branch protection on `main` requires one of them to approve.
+Reviews route automatically: `.github/CODEOWNERS` names the four maintainers, by GitHub login, for every part of the tree, and the branch protection on `main` requires one of them to approve. The Labels workflow ([.github/workflows/labels.yml](.github/workflows/labels.yml)) labels each pull request `docs-only`, `infra`, `runtime`, `console` or `ci` from the files it changes, as [.github/labeler.yml](.github/labeler.yml) maps them, so the kind of review is visible before it starts; a new top-level directory, or a top-level file other than Markdown, needs a line there, or `tests/test_pr_labels.py` fails.
 
 ## Contributions written with AI assistance
 
