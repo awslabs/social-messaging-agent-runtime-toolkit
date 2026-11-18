@@ -24,7 +24,7 @@
   },
   "devDependencies": {
     "@cloudscape-design/test-utils-core": "^1.0.0",
-    "@testing-library/jest-dom": "^6.0.0",
+    "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.0.0",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
