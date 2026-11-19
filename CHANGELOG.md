@@ -4,6 +4,9 @@ All notable changes to SMART, the Social Messaging Agent Runtime Toolkit, are re
 
 ## [Unreleased]
 
+### Fixed
+- Raised the `boto3` floor in `pyproject.toml` from `>=1.38.0` to `>=1.39.14` so environments installing `smart-socialagent` alongside older `boto3` releases have both the `bedrock-agentcore` client (1.39.7) and the `socialmessaging` WhatsApp template APIs (1.39.14), backed by a CI job that tests the runtime dependencies alone at their declared floors (#188).
+
 ## [2026.11.0] - 2026-11-13
 
 **Upgrading a project.** The agent runtime changed in this release (outbound reactions), and a project's `socialagent_runtime/` is a copy made by `socialagent init`, so it keeps the old one until it is replaced. A CLI installed from PyPI has no git history to tell an earlier copy from a later or edited one, so `socialagent runtime status` reports the copy as `unknown` and `socialagent runtime update` refuses it: run `socialagent runtime update --force`, which keeps a backup under `.socialagent/runtime-backups/`.
