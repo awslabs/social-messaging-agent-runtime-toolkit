@@ -16,6 +16,10 @@
 # ruff arrives alone because a minor release can add lint rules. `hashicorp/aws`
 # majors are not proposed: a provider major is a planned migration (in the
 # admin console it changes the Cognito and IAM resources), not a weekly bump.
+# A published `smart-socialagent` must never ask for a newer dependency than
+# it needs, so uv updates uv.lock only and never a floor in pyproject.toml
+# (`lockfile-only`: `increase-if-necessary` still raised floors that already
+# allowed the new release); a floor moves by hand, with the test that needs it.
 # pip and npm raise a range's floor only when the new version needs it. The
 # workflows pin every action to a full commit SHA with the release tag in a
 # trailing comment; Dependabot moves both.
@@ -29,6 +33,7 @@ version: 2
 updates:
   - package-ecosystem: uv
     directory: /
+    versioning-strategy: lockfile-only
     schedule:
       interval: weekly
     cooldown:

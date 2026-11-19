@@ -2,6 +2,8 @@
 
 Thank you for your interest in contributing to our project. Whether it's a bug report, new feature, correction, or additional documentation, we greatly value feedback and contributions from our community.
 
+If you're here to contribute, you probably find SMART useful. If so, please star the repository: it's the simplest way to show your support, and it helps others find the project.
+
 Please read through this document before submitting any issues or pull requests to ensure we have all the necessary information to effectively respond to your bug report or contribution.
 
 If you plan to change code, read [AGENTS.md](AGENTS.md) first. It is the architecture overview of this repository and the fastest way to understand the two-layer model, the recipe system, and the current known issues before you touch code.
@@ -42,9 +44,21 @@ Pull requests from outside contributors are reviewed by the project maintainers,
 
 ## What to expect from the maintainers
 
-Issues and pull requests are triaged within five business days: labelled, and either answered, assigned, or closed with the reason. Beyond that, response time is best effort. A pull request that passes the checks and has an approving review from a code owner is merged by a maintainer; one that goes a month without a response from its author after a review is closed, and can be reopened. There is no stale bot; a maintainer closes it and says why.
+Issues and pull requests are triaged within five business days: labelled, and either answered, assigned, or closed with the reason. Beyond that, response time is best effort. A pull request that passes the checks and has an approving review from a maintainer other than its author is merged by a maintainer (one from an outside contributor also gets the second review described in [Reviewing a pull request](#reviewing-a-pull-request-maintainers)); one that goes a month without a response from its author after a review is closed, and can be reopened. There is no stale bot; a maintainer closes it and says why.
 
-Reviews route automatically: `.github/CODEOWNERS` names the four maintainers, by GitHub login, for every part of the tree, and the branch protection on `main` requires one of them to approve.
+Reviews route automatically by area: `.github/CODEOWNERS` gives each part of the tree one owner among the four maintainers, by GitHub login (agent and runtime, admin console, infrastructure as code, CLI and Lambda control layer, and security, which covers `.github/`, `SECURITY.md`, the threat model, the data flows and every Terraform file that defines an IAM role or policy), and names all four for everything else, such as docs, ADRs, tests and scripts. Owners are for routing: the branch protection on `main` requires one approval from a maintainer other than the author, not from a code owner, so an owner who is away never blocks an area.
+
+### Who reviews a pull request
+
+- **One approval** from a maintainer other than the author, for every pull request.
+- **A second maintainer's review** as well, for:
+  - a pull request by an area's owner that changes their own area;
+  - a pull request from a fork ([Reviewing a pull request](#reviewing-a-pull-request-maintainers), step 5);
+  - a change to a security path, the lines at the end of `.github/CODEOWNERS`;
+  - a change to a contract: the payload between the Lambdas and the agent (`SOCIALAGENT_VERSION`), or the CLI's public commands and options.
+- **While an owner is away**, the maintainers agree who covers the area for that period; `.github/CODEOWNERS` does not change.
+
+GitHub cannot require two approvals for some paths only, so the second review is the maintainers' rule rather than a branch protection setting.
 
 ## Contributions written with AI assistance
 
@@ -88,7 +102,7 @@ Notes on the test suites:
 - `uv.lock` is committed and CI installs with `uv sync --frozen`, so a dependency change means committing the updated lockfile in the same pull request.
 - Ruff covers `src/`, `tests/` and `packages/` only. `blueprints/` and `recipes/` are deliberately excluded, since they are templates copied verbatim into user projects.
 
-The Security workflow ([.github/workflows/security.yml](.github/workflows/security.yml)) also runs on every pull request: CodeQL (only after a repository admin sets `CODE_SCANNING_ENABLED=true` once public code scanning is ready, since code scanning on a private repository needs GitHub Advanced Security), an [Automated Security Helper](https://github.com/awslabs/automated-security-helper) scan, a gitleaks secret scan, and `workflow-lint`, which checks the workflows themselves with actionlint (and shellcheck) and zizmor. Run it locally with `uvx --from actionlint-py==1.7.7.23 --with shellcheck-py==0.10.0.1 actionlint .github/workflows/*.yml && uvx zizmor==1.11.0 --no-online-audits .github/workflows/`. Fix what they report rather than suppressing it; if you believe a suppression is justified, explain why in the pull request. To run the ASH scan locally with the version the workflow pins, use `uvx --from git+https://github.com/awslabs/automated-security-helper.git@v3.7.1 ash --mode precommit --source-dir .`.
+The Security workflow ([.github/workflows/security.yml](.github/workflows/security.yml)) also runs on every pull request: an [Automated Security Helper](https://github.com/awslabs/automated-security-helper) scan, a gitleaks secret scan, and `workflow-lint`, which checks the workflows themselves with actionlint (and shellcheck) and zizmor. CodeQL runs separately, through GitHub's code scanning default setup (Python, JavaScript/TypeScript and the workflows), on pull requests from branches of this repository, every push to `main` and weekly (default setup skips pull requests from forks, so a change from a fork is first scanned when it merges); its checks are named `Analyze (<language>)`. Run workflow-lint locally with `uvx --from actionlint-py==1.7.7.23 --with shellcheck-py==0.10.0.1 actionlint .github/workflows/*.yml && uvx zizmor==1.11.0 --no-online-audits .github/workflows/`. Fix what they report rather than suppressing it; if you believe a suppression is justified, explain why in the pull request. To run the ASH scan locally with the version the workflow pins, use `uvx --from git+https://github.com/awslabs/automated-security-helper.git@v3.7.1 ash --mode precommit --source-dir .`.
 
 The workflows pin every action to a full commit SHA with its release tag in a trailing comment (`uses: actions/checkout@<sha> # v4.4.0`), because a tag can be moved. A new step must use the same form; Dependabot updates the SHA and the comment together, and waits until a release is 7 days old before proposing it.
 
@@ -170,6 +184,28 @@ A pull request is ready for review when:
 4. `make check` and `bash scripts/check_license_headers.sh` pass locally, plus the suites from [Running the checks locally](#running-the-checks-locally) that your change touches; new behavior has tests, and no existing test was broken or weakened.
 
 If any of these isn't true, say so in the pull request description rather than leaving it for review to discover. A pull request that says "docs not updated yet, follow-up issue linked below" is easier to review than one that silently omits them.
+
+## Reviewing a pull request (maintainers)
+
+The checks above are what a review looks for. This is how maintainers review a pull request from an outside contributor without running untrusted code where it can reach them:
+
+1. **Pin the head and read the whole diff.** Note the head commit (`gh pr view <n> --json headRefOid`), fetch it with `git fetch origin pull/<n>/head` and read `git diff origin/main...<sha>`, which needs no checkout (`gh pr diff` always shows the current head, so it cannot pin a SHA). Start with the files that run: `Makefile`, `scripts/`, `pyproject.toml`, `uv.lock`, `conftest.py`, `package.json`, `.github/`, Dockerfiles, tool configuration a fork could add (`.mcp.json`, `.envrc`, `.vscode/`, `.devcontainer/`), and agent instruction files (`AGENTS.md`, `CLAUDE.md`, `.kiro/`, `.claude/`, `.amazonq/`). The repository requires approval for every outside contributor's workflow runs; approve them only for a SHA you have read.
+2. **Never run a fork's code in your working clone or with your credentials in reach.** CI runs the suite without AWS access. To run anything CI does not show, use a throwaway container started from a fresh clone, with no host directory mounted and nothing from your environment, and check that the head it fetched is the SHA you read.
+3. **Check that each new test covers the change.** In the step 2 container, since it runs the pull request's code: the test passes at the head, and fails with the pull request's non-test changes restored to the merge base. Where the linked issue describes how to reproduce the bug, reproduce it on the merge base and on the head.
+4. **Check the rest against "What maintainers check"**, plus the commit authors against the pull request's author and the license of any new dependency.
+5. **A second maintainer repeats steps 1 to 4** on the same SHA and writes down what they ran and found. If the head moves, the diff is read again; when it moved only because `main` was merged in, `git show --remerge-diff <sha>` shows what the merge itself changed.
+6. **Merge in order.** Pull requests that add to `## [Unreleased]` in `CHANGELOG.md` conflict with each other: merge first the ones that do not touch it, then the others one at a time, updating the next branch after each merge. On a fork only the author can update it, or a maintainer when the pull request allows edits by maintainers; a maintainer's update dismisses the approval, so it needs a fresh one. Merge with `gh pr merge <n> --merge --match-head-commit <sha>` on the SHA that was reviewed: the repository allows squash and rebase too, and either lands a new commit rather than the reviewed one.
+
+## Releasing
+
+Maintainers only. A release is published on PyPI as `smart-socialagent` by [.github/workflows/release.yml](.github/workflows/release.yml), through PyPI trusted publishing: no token is stored in the repository or its secrets.
+
+1. In a pull request, set `VERSION` to the new release (`YYYY.MM.patch`) and the same number in the README's version badge and in `solution_version` in `infra-terraform/locals.tf` (`tests/test_release_files.py` checks both). Move the `[Unreleased]` entries of `CHANGELOG.md` under a heading for it and update the compare links at the end of the file. Merge it.
+2. Tag the merge commit `v<VERSION>` and publish a GitHub Release from that tag.
+3. The Release workflow checks that the tag matches `VERSION`, is on `main` (or, for a patch release, on its line's release branch, `release/2026.11` for `v2026.11.1`, which has the same protection as `main`) and is not a pre-release, runs the packaging tests and `twine check --strict` in a job of their own, and builds the wheel and sdist in a job that does nothing else. The publish job then waits in the `pypi` environment until a required reviewer approves it, and uploads. A release runs the `release.yml` in its tagged commit, so a release branch is cut from its `.0` tag (never from `main`, which would bring unreleased features) and its first backport pull request brings over the current `release.yml`, again whenever that file changes on `main`; until then the branch's own copy refuses its patch tags.
+4. Check the release page on PyPI. PyPI never accepts the same version twice, even after a release is deleted, so a mistake is fixed with a new patch release.
+
+One-time setup, before the first release through the workflow: on PyPI, the project's Publishing settings name this repository, `release.yml` and the `pypi` environment as a trusted publisher; in the repository settings, the `pypi` environment has required reviewers, with "Prevent self-review" on and administrator bypass off, and accepts deployments only from `v*` tags, and a tag ruleset limits who can create, move or delete `v*` tags.
 
 ## Code of Conduct
 

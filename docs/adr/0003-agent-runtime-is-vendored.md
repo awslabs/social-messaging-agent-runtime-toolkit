@@ -17,7 +17,7 @@ tags: [packaging, runtime]
 
 ## Context
 
-The Agent Runtime Package (`packages/socialagent-runtime/`) runs inside the agent container the adopter builds. It has to get into that container somehow. The toolkit is not published to a package index (see [ADR-0008](0008-pypi-distribution-name.md) for the open question of its name there), and a `pip install` from a git URL inside a Dockerfile needs network access to the repository at build time and pins the project to a commit it cannot see. The package is also small: a handful of modules with no dependency beyond boto3 and the AgentCore SDK the agent already has.
+The Agent Runtime Package (`packages/socialagent-runtime/`) runs inside the agent container the adopter builds. It has to get into that container somehow. The agent-side package is not published to a package index (the toolkit is, as `smart-socialagent`; see [ADR-0008](0008-pypi-distribution-name.md)), and a `pip install` from a git URL inside a Dockerfile needs network access to the repository at build time and pins the project to a commit it cannot see. The package is also small: a handful of modules with no dependency beyond boto3 and the AgentCore SDK the agent already has.
 
 Whatever the mechanism, two things must stay true: a project must build without reaching back to this repository, and the toolkit must be able to tell whether a project is running a copy it has shipped, an older one, or something edited by hand, because fixes to the runtime only reach a project when its copy changes.
 

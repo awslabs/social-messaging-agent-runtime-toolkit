@@ -917,6 +917,19 @@ def test_no_bucket_logs_its_own_log_deliveries_without_end():
     ], f"another bucket logs to itself: {self_logging}"
 
 
+def test_deployer_scope_notes_tell_how_to_log_audit_and_template_buckets():
+    """Issue #93: SECURITY.md explains why the audit-trails and template-sync
+    buckets lack access logging by default and tells production deployers how
+    to log them (a separate log bucket or CloudTrail S3 data events).
+    """
+    security_md = (REPO_ROOT / "SECURITY.md").read_text()
+    notes = security_md.split("## Scope Notes for Deployers", 1)[1].split("\n## ", 1)[0]
+    assert "template-sync bucket" in notes
+    assert "audit-trails bucket" in notes
+    assert "CloudTrail S3 data events" in notes
+    assert "separate log bucket" in notes
+
+
 def test_console_registry_listing_skips_the_access_log_prefix():
     """The per-admin registry bucket logs to itself, beside the stacks at its
     root, and the backend lists that root for stacks. It skips the prefix the
@@ -1455,6 +1468,21 @@ def test_agent_source_archive_applies_the_filters(archive: str):
     assert "local.agent_source_filter_excludes" in excludes.group(1)
     for name in ("__pycache__", ".venv", "node_modules", ".git", ".socialagent"):
         assert f'"{name}"' in excludes.group(1), f"{archive} no longer excludes {name}"
+
+
+def test_agent_source_archives_exclude_the_same_names():
+    """The Docker and zip archives leave out the same root-level names, so a
+    zip-mode project does not ship directories the agent never runs, such as
+    infrastructure/."""
+    tf = _code(CODEBUILD_TF.read_text())
+    names: dict[str, list[str]] = {}
+    for archive in ("agent_source", "agent_source_zip"):
+        block = _block(tf, f'data "archive_file" "{archive}"')
+        excludes = re.search(r"^\s*excludes\s*=\s*(.*)$", block, re.MULTILINE)
+        assert excludes, f"archive_file.{archive} has no excludes"
+        names[archive] = sorted(re.findall(r'"([^"]*)"', excludes.group(1)))
+
+    assert names["agent_source_zip"] == names["agent_source"]
 
 
 # Paths that must still ship, and every dropped path with the `excludes` entry
@@ -3016,6 +3044,39 @@ def test_build_archives_ship_the_version_file():
     assert re.search(
         rf'^\s*filename\s*=\s*"{re.escape(version_path)}"', templates, re.M
     ), f"the template-sync source archive does not ship {version_path}"
+
+
+def test_build_archives_ship_the_readme():
+    """pyproject.toml names a readme file, and hatchling fails without it.
+
+    Both Terraform-built archives run `pip install .`, and both name their root
+    files by hand, so a readme that is not listed fails the layer build or the
+    template sync, and with it the deploy.
+    """
+    import tomllib
+
+    pyproject = tomllib.loads((INFRA.parent / "pyproject.toml").read_text())
+    readme = pyproject["project"].get("readme")
+    if isinstance(readme, dict):
+        readme = readme.get("file")
+    if not readme:
+        return
+    assert (INFRA.parent / readme).is_file(), f"{readme} is missing"
+
+    packaging = (INFRA / "packaging.tf").read_text()
+    root_files = re.search(r"layer_root_files\s*=\s*\[([^\]]*)\]", packaging)
+    assert root_files, "layer_root_files is gone from infra-terraform/packaging.tf"
+    assert f'"{readme}"' in root_files.group(1), (
+        f"the Lambda layer source archive does not ship {readme}"
+    )
+
+    templates = _block(
+        _code((INFRA / "modules" / "templates" / "main.tf").read_text()),
+        'data "archive_file" "template_source"',
+    )
+    assert re.search(rf'^\s*filename\s*=\s*"{re.escape(readme)}"', templates, re.M), (
+        f"the template-sync source archive does not ship {readme}"
+    )
 
 
 # =============================================================================

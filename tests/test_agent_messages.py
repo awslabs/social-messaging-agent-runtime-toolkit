@@ -268,3 +268,54 @@ def test_list_menu_duplicate_row_id_across_sections_rejected() -> None:
 def test_buttons_duplicate_labels_rejected() -> None:
     with pytest.raises(ValueError, match="unique"):
         messages_mod.buttons("body", ["Yes", "No", "Yes"])
+
+
+# ── outbound reactions ────────────────────────────────────────────────────────
+
+
+def test_reaction_builder() -> None:
+    """reaction() matches the EUM Social / WhatsApp reaction payload."""
+    msg = messages_mod.reaction("wamid.HBgNexample", "👍")
+    assert msg == {
+        "type": "reaction",
+        "payload": {
+            "reaction": {"message_id": "wamid.HBgNexample", "emoji": "👍"},
+        },
+    }
+
+
+def test_reaction_empty_emoji_is_included() -> None:
+    """WhatsApp removes a reaction when the emoji field is an empty string."""
+    msg = messages_mod.reaction("wamid.1", "")
+    assert msg["payload"]["reaction"] == {"message_id": "wamid.1", "emoji": ""}
+
+
+def test_reaction_empty_message_id_rejected() -> None:
+    with pytest.raises(ValueError, match="message_id"):
+        messages_mod.reaction("", "👍")
+
+
+@pytest.mark.asyncio
+async def test_outbound_context_queues_reaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A reaction is queued like other builders, not sent mid-turn."""
+    monkeypatch.setenv("NOTIFICATION_LAMBDA_ARN", "arn:aws:lambda:::function:notify")
+    mock_client = MagicMock()
+    with patch.object(notify_mod, "_lambda_client", return_value=mock_client):
+        with notify_mod.outbound_context() as outbound:
+            await notify_mod.send_message(
+                "+15555550199",
+                messages_mod.reaction("wamid.1", "👍"),
+            )
+
+    mock_client.invoke.assert_not_called()
+    assert len(outbound) == 1
+    queued = outbound[0]
+    assert queued["operation"] == "send_message"
+    assert queued["phone"] == "+15555550199"
+    assert queued["message"]["type"] == "reaction"
+    assert queued["message"]["payload"]["reaction"] == {
+        "message_id": "wamid.1",
+        "emoji": "👍",
+    }

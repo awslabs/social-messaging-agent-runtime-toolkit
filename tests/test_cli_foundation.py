@@ -28,6 +28,44 @@ def test_run_streams_to_the_terminal_by_default(capfd):
     assert "streamed" in capfd.readouterr().out
 
 
+def test_run_flushes_both_streams_before_each_child(tmp_path):
+    import os
+    import subprocess
+
+    # Use a separate interpreter and a real file: pytest's capture can flush
+    # the parent's streams and hide the buffering that happens in CI logs.
+    code = """
+import sys
+from socialagent.cli._runner import run
+sys.stdout.reconfigure(line_buffering=False, write_through=False)
+sys.stderr.reconfigure(line_buffering=False, write_through=False)
+for index in range(2):
+    print(f"parent stdout {index}")
+    print(f"parent stderr {index}", file=sys.stderr)
+    run([sys.executable, "-c", f"print('child {index}')"])
+"""
+    env = dict(os.environ)
+    env.pop("PYTHONUNBUFFERED", None)
+    log = tmp_path / "runner.log"
+    with log.open("w") as output:
+        subprocess.run(
+            [sys.executable, "-c", code],
+            env=env,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            check=True,
+            timeout=30,
+        )
+    assert log.read_text().splitlines() == [
+        "parent stdout 0",
+        "parent stderr 0",
+        "child 0",
+        "parent stdout 1",
+        "parent stderr 1",
+        "child 1",
+    ]
+
+
 def test_run_nonzero_raises_with_child_stderr_when_captured():
     code = "import sys; print('boom', file=sys.stderr); sys.exit(3)"
     with pytest.raises(CommandError) as exc:

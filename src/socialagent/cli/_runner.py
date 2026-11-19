@@ -23,8 +23,10 @@ a fake instead of needing a real ``terraform`` on PATH.
 from __future__ import annotations
 
 import shlex
+import shutil
 import signal
 import subprocess
+import sys
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -53,6 +55,30 @@ class CommandError(CliError):
 
 Runner = Callable[..., Result]
 
+# Where to get each program a command needs, for the message that says it is
+# missing. The AWS CLI is on the list because Terraform's provisioners call it
+# (CodeBuild starts and waits in packaging.tf and the module builds).
+_INSTALL = {
+    "terraform": "Terraform >= 1.7 (https://developer.hashicorp.com/terraform/install)",
+    "aws": "the AWS CLI, which Terraform's provisioners call "
+    "(https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)",
+}
+
+
+def require_on_path(command: str, *programs: str) -> None:
+    """Fail before any work starts when a program *command* runs is not on PATH.
+
+    ``run`` would report it too, but only when the program is first called,
+    which for ``aws`` is in the middle of an apply, after resources changed.
+    """
+    missing = [p for p in programs if shutil.which(p) is None]
+    if missing:
+        raise CliError(
+            f"`socialagent {command}` needs {' and '.join(missing)} on PATH. Install "
+            + "; ".join(_INSTALL.get(p, p) for p in missing)
+            + "."
+        )
+
 
 def run(
     cmd: Sequence[str],
@@ -79,6 +105,10 @@ def run(
     argv = [str(c) for c in cmd]
     shown = shlex.join(argv)
     pipe = subprocess.PIPE if capture else None
+    # A child writes directly to inherited file descriptors, ahead of Python's
+    # buffered output when stdout is a file or pipe (for example, in CI).
+    sys.stdout.flush()
+    sys.stderr.flush()
     try:
         proc = subprocess.Popen(  # noqa: S603 — argv list, no shell
             argv,

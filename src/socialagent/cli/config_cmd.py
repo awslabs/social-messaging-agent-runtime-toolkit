@@ -14,10 +14,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from socialagent.cli import _deploy, _schema
+from socialagent.cli import _deploy, _infra, _schema
 from socialagent.cli._errors import CliError
 from socialagent.cli._project import project_root
-from socialagent.cli._runner import run
+from socialagent.cli._runner import require_on_path, run
 from socialagent.cli._tfvars import generate as generate_tfvars
 from socialagent.cli.config_file import (
     TerraformOutputError,
@@ -28,15 +28,6 @@ from socialagent.cli.config_file import (
     populate_outputs,
     _SCHEMA_VERSION,
 )
-
-
-def _find_tf_dir(start: Path) -> Path | None:
-    """Walk up from *start* looking for infra-terraform/."""
-    for parent in [start.resolve(), *start.resolve().parents]:
-        candidate = parent / "infra-terraform"
-        if candidate.is_dir() and (candidate / "main.tf").exists():
-            return candidate
-    return None
 
 
 def _from_other_environments(project_dir: Path, env: str, dotted: str) -> Any:
@@ -91,7 +82,11 @@ def _cmd_init(args: argparse.Namespace) -> None:
         print(f"Already exists: {cfg_path}")
         return
 
-    tf_dir = _find_tf_dir(project_dir)
+    try:
+        _infra.find_tf_dir(project_dir, materialize_copy=False)
+        has_terraform = True
+    except CliError:
+        has_terraform = False
     project_name = project_dir.name
     templates = _templates_of_other_environments(project_dir, args.env)
     templates_line = (
@@ -128,7 +123,7 @@ outputs: {{}}
         encoding="utf-8",
     )
     print(f"Created {cfg_path}")
-    if tf_dir:
+    if has_terraform:
         print(f"Run: socialagent config sync --env {args.env}")
 
 
@@ -164,10 +159,12 @@ def _cmd_sync(args: argparse.Namespace) -> None:
 
     config = load(cfg_path)
     check_environment(config, args.env, cfg_path)
-    tf_dir = args.tf_dir or _find_tf_dir(project_dir)
-    if not tf_dir:
-        print("Could not find infra-terraform/. Use --tf-dir.", file=sys.stderr)
+    try:
+        tf_dir = _infra.find_tf_dir(project_dir, args.tf_dir or "")
+    except CliError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
+    require_on_path("config sync", "terraform")
 
     workspace = _schema.get(config, "state.workspace") or (
         f"{config.get('project', project_dir.name)}-{args.env}"
@@ -216,9 +213,10 @@ def _cmd_tfvars(args: argparse.Namespace) -> None:
         raise CliError(
             f"config not found: {cfg_path} (run: socialagent config init --env {args.env})"
         )
-    tf_dir = Path(args.tf_dir) if args.tf_dir else _find_tf_dir(project_dir)
-    if not tf_dir or not (tf_dir / "variables.tf").is_file():
-        raise CliError("could not find infra-terraform/variables.tf; use --tf-dir")
+    # The packaged root, not a copy: this command writes nothing.
+    tf_dir = _infra.find_tf_dir(project_dir, args.tf_dir, materialize_copy=False)
+    if not (tf_dir / "variables.tf").is_file():
+        raise CliError(f"could not find {tf_dir / 'variables.tf'}; use --tf-dir")
     tfvars = generate_tfvars(load(cfg_path), project_dir, tf_dir)
     print(json.dumps(tfvars, indent=2))
 

@@ -689,13 +689,17 @@ function StateTab({ stackId, hasStateTable }: { stackId: string; hasStateTable: 
   const { data: entries, loading, error, refresh } = useApi<import("@/types").StateEntry[]>(() => hasStateTable ? withTimeout(api.getState(stackId)) : Promise.resolve([]), [stackId]);
   const [flash, setFlash] = useState<DeleteFlash[]>([]);
   const [selectedItems, setSelectedItems] = useState<import("@/types").StateEntry[]>([]);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const admin = usePermission("admin");
 
   if (!hasStateTable) return <Box textAlign="center" padding="xxl" color="text-body-secondary">State table not enabled for this stack.</Box>;
   if (error) return <Alert type="error" header="Failed to load state">{error}</Alert>;
 
+  const selectedPhones = new Set(selectedItems.map((e) => e.phone)).size;
+
   const handleDelete = async () => {
+    setConfirmDelete(false);
     setDeleting(true);
     const outcome = await deleteEach(selectedItems, (e) => deleteStateKey(stackId, e.phone, e.key));
     setDeleting(false);
@@ -709,6 +713,15 @@ function StateTab({ stackId, hasStateTable }: { stackId: string; hasStateTable: 
 
   return (
     <SpaceBetween size="l">
+      <Modal visible={confirmDelete} onDismiss={() => setConfirmDelete(false)}
+        header={`Delete ${selectedItems.length} key(s)`}
+        footer={<SpaceBetween direction="horizontal" size="xs">
+          <Button variant="link" onClick={() => setConfirmDelete(false)}>Cancel</Button>
+          <Button variant="primary" onClick={handleDelete}>Delete selected</Button>
+        </SpaceBetween>}
+      >
+        <Alert type="warning">This will permanently delete {selectedItems.length} state key(s) of {selectedPhones} user(s) on stack {stackId}. This cannot be undone.</Alert>
+      </Modal>
       {flash.length > 0 && <Flashbar items={flash.map((f, i) => ({ ...f, id: String(i), dismissible: true, onDismiss: () => setFlash([]) }))} />}
       <Table
         variant="container" resizableColumns selectionType="multi"
@@ -719,7 +732,7 @@ function StateTab({ stackId, hasStateTable }: { stackId: string; hasStateTable: 
         header={<Header variant="h2" counter={`(${(entries ?? []).length} keys across ${phones.length} users)`}
           description="Per-user key-value state stored in DynamoDB by the remember/recall tools."
           actions={<SpaceBetween direction="horizontal" size="xs">
-            <Button disabled={selectedItems.length === 0 || !admin.allowed} disabledReason={admin.reason} loading={deleting} onClick={handleDelete}>Delete selected ({selectedItems.length})</Button>
+            <Button disabled={selectedItems.length === 0 || !admin.allowed} disabledReason={admin.reason} loading={deleting} onClick={() => setConfirmDelete(true)}>Delete selected ({selectedItems.length})</Button>
             <Button iconName="refresh" variant="icon" onClick={refresh} />
           </SpaceBetween>}
         >User state</Header>}

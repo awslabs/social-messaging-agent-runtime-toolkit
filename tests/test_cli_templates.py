@@ -320,3 +320,80 @@ def test_validate_command_exit_status(tmp_path, capsys):
     ns.templates = "bad.yaml"
     with pytest.raises(CliError, match="Meta would reject"):
         cmd_templates_validate(ns)
+
+
+def test_validate_without_templates_file_or_config_exits_cleanly(
+    tmp_path, capsys, monkeypatch
+):
+    """The minimal blueprint writes no templates.yaml: nothing to check is not an error."""
+    from socialagent.cli.templates import cmd_templates_validate
+
+    monkeypatch.delenv("TEMPLATES_PATH", raising=False)
+    (tmp_path / "agent.py").write_text("")
+    (tmp_path / "templates.yaml").unlink()
+    cmd_templates_validate(argparse.Namespace(env="dev", prefix="", templates=""))
+    assert "No templates to check" in capsys.readouterr().out
+
+
+def test_validate_checks_default_templates_file_when_nothing_is_configured(
+    tmp_path, monkeypatch
+):
+    """Nothing configured still means templates.yaml is validated, not skipped."""
+    from socialagent.cli._errors import CliError
+    from socialagent.cli.templates import cmd_templates_validate
+
+    monkeypatch.delenv("TEMPLATES_PATH", raising=False)
+    (tmp_path / "agent.py").write_text("")
+    (tmp_path / "templates.yaml").write_text(_BAD)
+    with pytest.raises(CliError, match="Meta would reject"):
+        cmd_templates_validate(argparse.Namespace(env="dev", prefix="", templates=""))
+
+
+@pytest.mark.parametrize(
+    ("layout", "error"),
+    [
+        ("broken_symlink", "templates file not found"),
+        ("directory", "templates path is not a file"),
+        ("outside_project", "templates file not found"),
+    ],
+)
+def test_validate_default_path_that_is_not_an_empty_project_is_an_error(
+    tmp_path, monkeypatch, layout, error
+):
+    from socialagent.cli._errors import CliError
+    from socialagent.cli.templates import cmd_templates_validate
+
+    monkeypatch.delenv("TEMPLATES_PATH", raising=False)
+    (tmp_path / "templates.yaml").unlink()
+    if layout != "outside_project":
+        (tmp_path / "agent.py").write_text("")
+    if layout == "broken_symlink":
+        (tmp_path / "templates.yaml").symlink_to(tmp_path / "gone.yaml")
+    elif layout == "directory":
+        (tmp_path / "templates.yaml").mkdir()
+    with pytest.raises(CliError, match=error):
+        cmd_templates_validate(argparse.Namespace(env="dev", prefix="", templates=""))
+
+
+@pytest.mark.parametrize("source", ["flag", "env", "yaml"])
+def test_validate_missing_configured_templates_file_is_an_error(
+    tmp_path, monkeypatch, source
+):
+    from socialagent.cli._errors import CliError
+    from socialagent.cli.templates import cmd_templates_validate
+
+    monkeypatch.delenv("TEMPLATES_PATH", raising=False)
+    (tmp_path / "agent.py").write_text("")
+    (tmp_path / "templates.yaml").unlink()
+    ns = argparse.Namespace(env="dev", prefix="", templates="")
+    if source == "flag":
+        ns.templates = "missing.yaml"
+    elif source == "env":
+        monkeypatch.setenv("TEMPLATES_PATH", "missing.yaml")
+    else:
+        (tmp_path / "socialagent.dev.yaml").write_text(
+            "schema_version: 3\nproject: my-bot\nenvironment: dev\n"
+            "region: us-east-1\nwhatsapp:\n  templates: missing.yaml\n"
+        )
+    with pytest.raises(CliError, match="templates file not found"):
+        cmd_templates_validate(ns)

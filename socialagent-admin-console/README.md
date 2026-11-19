@@ -57,9 +57,9 @@ without affecting the other tabs or the global nav.
 | Restart Lambda (cold start) | Confirmation modal |
 | Restart AgentCore Runtime | Confirmation modal |
 | Change SNS destination (admin; registered topics on the same WABA only) | Confirmation modal |
-| Delete conversation | Button in chat modal |
+| Delete conversation | Button in chat modal + confirm |
 | Bulk delete conversations | Multi-select + confirm |
-| Delete state keys | Multi-select + delete |
+| Delete state keys | Multi-select + confirm |
 | Cancel schedules | Multi-select + confirm |
 | Nuclear reset | Type stack name + step-by-step progress |
 | Bind/unbind phone numbers (admin to take a WABA from a topic no stack uses) | Modal with stack selector |

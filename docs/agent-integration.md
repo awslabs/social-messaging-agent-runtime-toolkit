@@ -252,6 +252,8 @@ async def invoke(payload: dict, context: object) -> dict:
     await notify.send_text(phone, "Your payment was processed.")
     await notify.send_message(phone, messages.image("https://example.com/receipt.jpg"))
     await notify.send_message(phone, messages.buttons("What's next?", ["View order", "Contact us"]))
+    # React to the inbound message (empty emoji removes a reaction)
+    await notify.send_message(phone, messages.reaction(payload["socialagent"]["message_id"], "👍"))
 
     # Schedule for later
     await scheduler.schedule(

@@ -14,12 +14,13 @@ import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 import yaml
 
-from socialagent.cli import _deploy, _schema, _tfvars
+from socialagent.cli import _deploy, _infra, _schema, _tfvars
 from socialagent.cli._errors import CliError
 from socialagent.cli._runner import CommandError, Result
 
@@ -73,6 +74,9 @@ def checkout(tmp_path, monkeypatch):
     (tf / "variables.tf").write_text(
         (REPO_ROOT / "infra-terraform" / "variables.tf").read_text()
     )
+    # What makes it a SMART checkout rather than any infra-terraform/ (_infra._is_checkout).
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "smart-socialagent"\n')
+    (tmp_path / "src" / "socialagent").mkdir(parents=True)
     project = tmp_path / "projects" / "my-bot"
     (project / "handlers").mkdir(parents=True)
     (project / "socialagent.dev.yaml").write_text(
@@ -155,6 +159,57 @@ def test_plan_changes_nothing(checkout):
     )
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="fake terraform is a POSIX shell script"
+)
+def test_deploy_plan_prints_its_notice_before_terraform_in_a_log(checkout, tmp_path):
+    project, _ = checkout
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    terraform = bin_dir / "terraform"
+    terraform.write_text(
+        "#!/bin/sh\n"
+        'case "$2" in\n'
+        '  init|workspace|plan) echo "Terraform: $2" ;;\n'
+        "  show) echo '{\"resource_changes\": []}' ;;\n"
+        "  *) exit 1 ;;\n"
+        "esac\n"
+    )
+    terraform.chmod(0o755)
+    # Only replace the AWS account lookup and the external Terraform binary;
+    # CLI argument parsing, deployment preflight and the process runner are real.
+    code = f"""
+from unittest.mock import patch
+from socialagent.cli import main
+with patch("socialagent.cli._deploy.account_id", return_value={ACCOUNT!r}):
+    main()
+"""
+    env = dict(os.environ)
+    env.pop("PYTHONUNBUFFERED", None)
+    env.pop("TF_VAR_enable_deployment_metrics", None)
+    env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
+    log = tmp_path / "deploy.log"
+    with log.open("w") as output:
+        result = subprocess.run(
+            [sys.executable, "-c", code, "deploy", "--plan"],
+            cwd=project,
+            env=env,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            check=False,
+            timeout=30,
+        )
+    text = log.read_text()
+    assert result.returncode == 0, text
+    first_terraform = text.index("Terraform: init")
+    for line in (
+        "Planning my-bot (dev)",
+        "Anonymous deployment counter:",
+        "Variables:",
+    ):
+        assert text.index(line) < first_terraform, text
+
+
 def test_failed_apply_does_not_sync_outputs(checkout):
     project, _ = checkout
     runner = FakeRunner(fail_on="apply")
@@ -197,6 +252,8 @@ def test_missing_config_and_missing_checkout(tmp_path, monkeypatch):
         "schema_version: 3\nproject: my-bot\nenvironment: dev\nregion: us-east-1\n"
     )
     (tmp_path / ".git").mkdir()
+    # Nor does the CLI ship any Terraform to fall back on.
+    monkeypatch.setattr(_infra, "terraform_dir", lambda: tmp_path / "no-such-dir")
     with pytest.raises(CliError, match="could not find infra-terraform"):
         _deploy.deploy(_args(), runner=FakeRunner(), account=ACCOUNT)
 

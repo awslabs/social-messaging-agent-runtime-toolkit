@@ -35,10 +35,11 @@ To change an accepted decision, open a new record that supersedes it rather than
 | [0005](0005-capabilities-are-recipes.md) | Capabilities are recipes copied into the project, not plugins discovered at runtime | Accepted |
 | [0006](0006-memory-ownership.md) | The toolkit writes out-of-band messages to memory; the agent writes its own conversation | Accepted |
 | [0007](0007-templates-provider-agnostic-yaml.md) | Templates are provider-agnostic YAML; the provider implements the sync | Accepted |
-| [0008](0008-pypi-distribution-name.md) | Distribution name on PyPI | Proposed |
+| [0008](0008-pypi-distribution-name.md) | Distribution name on PyPI | Accepted |
 | [0009](0009-direct-sends-and-delivery-records.md) | Tools send when called; the toolkit records every message it delivers | Proposed |
 | [0010](0010-whatsapp-only-through-eum-social.md) | WhatsApp is reached only through AWS End User Messaging Social | Accepted |
 | [0011](0011-external-runtime-mode.md) | External runtime mode: the channel in front of an agent the stack did not deploy | Proposed |
+| [0012](0012-lifecycle-from-the-package.md) | The package carries the stack's Terraform, so a pip install covers the whole lifecycle | Accepted |
 
 ## Format
 

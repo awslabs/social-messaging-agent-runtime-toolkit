@@ -25,6 +25,19 @@ _STATE_TABLE_RE = re.compile(r"^[A-Za-z0-9_.-]+-state$")
 def _is_valid_state_table(name: str) -> bool:
     return bool(name) and len(name) <= 255 and _STATE_TABLE_RE.match(name) is not None
 
+
+# The scheduler and notification Lambdas keep one firing record per scheduled
+# firing in the state table, under a partition key of its own (``_schedule#``
+# and a hash of the schedule id, see FiringRecord in
+# src/socialagent/handlers/scheduled.py). Those rows belong to no user, so the
+# state views leave them out instead of listing and counting them as users.
+_SCHEDULE_PK_PREFIX = "_schedule#"
+
+
+def _is_schedule_record(item: dict) -> bool:
+    pk = item.get("pk", "")
+    return isinstance(pk, str) and pk.startswith(_SCHEDULE_PK_PREFIX)
+
 def handle_delete_state_key(params, body):
     """Delete a single key from the state table, phone and key from the JSON body.
 
@@ -73,6 +86,8 @@ def handle_get_state(params, _body):
         while True:
             resp = table.scan(**kwargs)
             for item in resp.get("Items", []):
+                if _is_schedule_record(item):
+                    continue
                 raw = item.get("data", "")
                 try:
                     value = json.loads(raw) if isinstance(raw, str) else raw
@@ -110,6 +125,8 @@ def handle_list_all_state(_params, _body):
             while True:
                 resp = table.scan(**kwargs)
                 for item in resp.get("Items", []):
+                    if _is_schedule_record(item):
+                        continue
                     raw = item.get("data", "")
                     try:
                         value = json.loads(raw) if isinstance(raw, str) else raw

@@ -120,6 +120,8 @@ function ConversationViewer({ visible, onDismiss, stackId, phoneHash, fullPhone,
   // A failed delete or send, shown over the messages already read.
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  // Asks first: the conversation's events are removed for good.
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [replyText, setReplyText] = useState("");
   const [sending, setSending] = useState(false);
   const [replyMode, setReplyMode] = useState<"text" | "template">("text");
@@ -204,6 +206,7 @@ function ConversationViewer({ visible, onDismiss, stackId, phoneHash, fullPhone,
   };
 
   const handleDelete = async () => {
+    setConfirmDelete(false);
     setDeleting(true);
     setError(null);
     try {
@@ -265,18 +268,32 @@ function ConversationViewer({ visible, onDismiss, stackId, phoneHash, fullPhone,
     <Modal visible={visible} onDismiss={onDismiss} header={`Conversation — ${phoneHash}`} size="large"
       footer={
         <SpaceBetween direction="horizontal" size="xs">
-          <Button variant="normal" onClick={onDismiss} disabled={deleting}>Close</Button>
-          {countText && (
-            <Box color="text-body-secondary" fontSize="body-s" padding={{ top: "xs" }}>
-              {countText}
-            </Box>
+          {confirmDelete ? (
+            <>
+              <Button variant="link" onClick={() => setConfirmDelete(false)}>Cancel</Button>
+              <Button variant="primary" onClick={handleDelete}>Delete</Button>
+            </>
+          ) : (
+            <>
+              <Button variant="normal" onClick={onDismiss} disabled={deleting}>Close</Button>
+              {countText && (
+                <Box color="text-body-secondary" fontSize="body-s" padding={{ top: "xs" }}>
+                  {countText}
+                </Box>
+              )}
+              <Button variant="normal" loading={deleting} disabled={!admin.allowed} disabledReason={admin.reason} onClick={() => setConfirmDelete(true)}>
+                {deleting ? deletingText : "Delete conversation"}
+              </Button>
+            </>
           )}
-          <Button variant="normal" loading={deleting} disabled={!admin.allowed} disabledReason={admin.reason} onClick={handleDelete}>
-            {deleting ? deletingText : "Delete conversation"}
-          </Button>
         </SpaceBetween>
       }
     >
+      {confirmDelete && (
+        <Alert type="warning">
+          This will permanently delete every event in the conversation with {phoneHash} from AgentCore Memory. This cannot be undone.
+        </Alert>
+      )}
       {loading && <Box textAlign="center" padding="xxl"><Spinner size="large" /></Box>}
       {deleting && (
         <Box textAlign="center" padding="xxl">

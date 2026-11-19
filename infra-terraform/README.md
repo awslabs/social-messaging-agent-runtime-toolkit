@@ -37,7 +37,7 @@ The agent source Terraform uploads for that build is your project folder without
 
 ## Deployment Model
 
-The SMART checkout holds the SDK (`src/socialagent/`), the agent runtime package (`packages/socialagent-runtime/`), this Terraform root, and your projects under `projects/`. Each project carries its own configuration in `socialagent.<env>.yaml`; nothing project-specific lives in `infra-terraform/`.
+The SMART checkout holds the SDK (`src/socialagent/`), the agent runtime package (`packages/socialagent-runtime/`), this Terraform root, and your projects under `projects/`. Each project carries its own configuration in `socialagent.<env>.yaml`; nothing project-specific lives in `infra-terraform/`. The `smart-socialagent` wheel ships this directory too (without `tftest/`, state, tfvars or `.terraform/`), and a CLI run outside a checkout copies it into the project's `.socialagent/infra/`; that copy cannot deploy yet, because `packaging.tf` builds the Lambda layer from the SDK source beside this directory ([Getting Started](../docs/getting-started.md#3-deploy-to-aws--socialagent-deploy)).
 
 ```
 social-messaging-agent-runtime-toolkit/
@@ -237,7 +237,7 @@ This solution is for prototyping and evaluation purposes. You must determine how
 
 ## Operational Metrics Collection
 
-This deployment creates a small CloudFormation stack, `<env>-<project>-deployment-metrics`, whose only purpose is to let AWS count deployments of this solution. AWS reads an anonymous tracking code (`uksb-pool7fymvx`, set as `tracking_id` in `locals.tf`) from the stack's description. That description is the only thing collected from; the resource tags and resource descriptions elsewhere in this stack are not an ingestion path.
+This deployment creates a small CloudFormation stack, `<env>-<project>-deployment-metrics`, whose only purpose is to let AWS count deployments of this solution. AWS reads an anonymous tracking code (`uksb-pool7fymvx`, set as `tracking_id` in `locals.tf`) from the stack's description, which ends with the solution version (`(vX.Y.Z)`, from `solution_version` in `locals.tf`) so the count can be broken down by release. That description is the only thing collected from; the resource tags and resource descriptions elsewhere in this stack are not an ingestion path.
 
 **What the stack contains.** One [SSM Parameter Store](https://docs.aws.amazon.com/systems-manager/latest/userguide/systems-manager-parameter-store.html) parameter at Standard tier, `/<env>-<project>/deployment-metrics/tracking-code`. CloudFormation requires every template to declare at least one resource, so this is the marker. Standard parameters are free to store and free at standard throughput, it counts against the 10,000 standard parameters per account per Region, and nothing in this solution ever reads it back. You can inspect it yourself:
 
@@ -245,7 +245,7 @@ This deployment creates a small CloudFormation stack, `<env>-<project>-deploymen
 aws ssm get-parameter --name /<env>-<project>/deployment-metrics/tracking-code
 ```
 
-**What is collected.** The fact that a deployment of this solution happened, keyed to the opaque code above. **What is not collected:** no usage data, no message content, no conversation data, no customer data, and nothing AWS does not already see in its own CloudFormation control plane.
+**What is collected.** The fact that a deployment of this solution happened, keyed to the opaque code above, and the solution version (release) deployed. **What is not collected:** no usage data, no message content, no conversation data, no customer data, and nothing AWS does not already see in its own CloudFormation control plane.
 
 How AWS handles the information it collects is described in the [AWS Privacy Policy](https://aws.amazon.com/privacy/).
 

@@ -88,6 +88,7 @@ describe("State page", () => {
 
     await selectFirstRow(container);
     fireEvent.click(screen.getByRole("button", { name: "Delete selected (1)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete selected" }));
 
     expect(await screen.findByText("Deleted 0 key(s), 1 failed")).toBeInTheDocument();
     expect(screen.getByText("Forbidden: Requires 'admin' group membership")).toBeInTheDocument();
@@ -101,6 +102,7 @@ describe("State page", () => {
 
     await selectFirstRow(container);
     fireEvent.click(screen.getByRole("button", { name: "Delete selected (1)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete selected" }));
 
     expect(await screen.findByText("Deleted 0 key(s), 1 not found")).toBeInTheDocument();
     expect(flashes(container).findItemsByType("warning")).toHaveLength(1);
@@ -113,6 +115,7 @@ describe("State page", () => {
 
     await selectFirstRow(container);
     fireEvent.click(screen.getByRole("button", { name: "Delete selected (1)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete selected" }));
 
     expect(await screen.findByText("Deleted 1 key(s)")).toBeInTheDocument();
     expect(flashes(container).findItemsByType("success")).toHaveLength(1);
@@ -147,6 +150,7 @@ describe("Stack Detail tabs", () => {
 
     await selectFirstRow(container);
     fireEvent.click(screen.getByRole("button", { name: "Delete selected (1)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete selected" }));
 
     expect(await screen.findByText("Deleted 0 key(s), 1 failed")).toBeInTheDocument();
     expect(screen.getByText("Forbidden: Requires 'admin' group membership")).toBeInTheDocument();

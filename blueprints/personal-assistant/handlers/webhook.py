@@ -68,6 +68,7 @@ async def handle_media(message) -> str:
                 poll_interval=config.transcribe_poll_interval,
                 max_wait=config.transcribe_timeout,
                 key_prefix=config._transcription_prefix,
+                language_options=config.transcribe_languages,
             )
         except Exception as e:  # noqa: BLE001
             logger.warning("Audio transcription failed: %s", e)

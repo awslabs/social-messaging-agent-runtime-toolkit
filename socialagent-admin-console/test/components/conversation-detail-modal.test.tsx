@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect, afterEach, beforeAll, vi } from "vitest";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ConversationDetailModal } from "@/components/conversation-detail-modal";
 import { api } from "@/api/client";
 import { ApiError } from "@/api/errors";
@@ -166,6 +166,45 @@ describe("ConversationDetailModal template lines", () => {
     expect(screen.queryByText(/Hello from the dev stack/)).not.toBeInTheDocument();
     expect(screen.getByText("Second conversation")).toBeInTheDocument();
     expect(screen.getByText(/Hello from the test stack/)).toBeInTheDocument();
+  });
+});
+
+describe("ConversationDetailModal delete", () => {
+  beforeAll(() => {
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  afterEach(() => {
+    vi.mocked(api.getConversationMessages).mockReset().mockResolvedValue(userMessages());
+    vi.mocked(api.deleteConversation).mockReset().mockResolvedValue({ deleted: 1 });
+  });
+
+  it("asks before deleting the conversation's history", async () => {
+    // One click used to delete every event of the conversation, with no undo.
+    const onDelete = vi.fn();
+    render(<ConversationDetailModal visible onDismiss={() => {}} onDelete={onDelete} stackId="bot-dev" phoneHash="1555...0100" fullPhone="15555550100" />);
+    await screen.findByText("0 messages");
+    expect(document.body.className).toMatch(/modal-open/);
+    expect(screen.queryByText(/cannot be undone/)).not.toBeInTheDocument();
+
+    const viewerDialog = screen.getByRole("dialog", { name: "Conversation — 1555...0100" });
+    fireEvent.click(within(viewerDialog).getByRole("button", { name: "Delete conversation" }));
+    expect(screen.getByText(/permanently delete every event in the conversation with 1555\.\.\.0100/)).toBeInTheDocument();
+    expect(screen.getByText(/cannot be undone/)).toBeInTheDocument();
+    expect(api.deleteConversation).not.toHaveBeenCalled();
+    expect(onDelete).not.toHaveBeenCalled();
+    expect(document.body.className).toMatch(/modal-open/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByText(/cannot be undone/)).not.toBeInTheDocument();
+    expect(api.deleteConversation).not.toHaveBeenCalled();
+    expect(document.body.className).toMatch(/modal-open/);
+
+    // The conversation is only deleted once the confirmation is confirmed.
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Conversation — 1555...0100" })).getByRole("button", { name: "Delete conversation" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(api.deleteConversation).toHaveBeenCalledWith("bot-dev", "15555550100"));
+    await waitFor(() => expect(onDelete).toHaveBeenCalled());
   });
 });
 

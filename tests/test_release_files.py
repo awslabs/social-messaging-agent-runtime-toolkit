@@ -39,7 +39,7 @@ def test_pyproject_reads_version_from_the_file():
 
 
 def test_installed_distribution_matches_the_file():
-    assert installed_version("socialagent") == VERSION
+    assert installed_version("smart-socialagent") == VERSION
 
 
 def test_cli_reports_the_file_version():
@@ -62,6 +62,32 @@ def test_marker_description_carries_the_release_version():
     assert match.group(1) == VERSION
 
 
+def _marker_template() -> str:
+    return (ROOT / "infra-terraform" / "metrics.tf").read_text()
+
+
+def test_marker_description_ends_with_the_version():
+    """The deployment report reads the release from a trailing (vX.Y.Z), so the
+    version stays the last token of the stack description."""
+    match = re.search(
+        r'^\s*Description\s*=\s*"([^"]*\(tag:core\)[^"]*)"', _marker_template(), re.M
+    )
+    assert match, "metrics.tf no longer has the marker stack description"
+    assert match.group(1).endswith("(v${local.solution_version})"), match.group(1)
+
+
+def test_marker_parameter_changes_with_the_version():
+    """CloudFormation does not apply a description-only change, so a release
+    must also change a resource property for an upgraded stack to take the new
+    description. The SSM parameter's Description carries the version for that."""
+    descriptions = re.findall(
+        r'^\s*Description\s*=\s*"([^"]*)"', _marker_template(), re.M
+    )
+    parameter = [d for d in descriptions if "(tag:core)" not in d]
+    assert parameter, "metrics.tf no longer describes the marker parameter"
+    assert all("${local.solution_version}" in d for d in parameter), parameter
+
+
 def test_changelog_has_a_heading_for_the_version_and_an_unreleased_section():
     log = (ROOT / "CHANGELOG.md").read_text()
     assert "## [Unreleased]" in log
@@ -81,7 +107,8 @@ def test_readme_badge_matches():
 
 
 def test_codeowners_routes_every_path_to_the_maintainers():
-    """Every rule names the four maintainers' GitHub logins and nothing else.
+    """The catch-all rule names the four maintainers' GitHub logins; every other
+    rule names one owner from among them, and nothing else.
 
     GitHub skips an owner it cannot resolve, such as a placeholder handle, so a
     rule without them routes its reviews to no one. They are the maintainers in
@@ -94,15 +121,28 @@ def test_codeowners_routes_every_path_to_the_maintainers():
         for line in owners.splitlines()
         if line.strip() and not line.startswith("#")
     ]
-    assert "*" in [path for path, *_ in rules], "CODEOWNERS needs a catch-all line"
+    paths = [path for path, *_ in rules]
+    # GitHub uses the last matching line, so a catch-all anywhere but first would
+    # override every area rule above it.
+    assert paths[:1] == ["*"], "CODEOWNERS needs the catch-all as its first line"
+    assert paths.count("*") == 1, paths
     # The handles are not repeated here, so a typo made on every rule would pass a
     # self-comparison; the digest of the catch-all rule's owners is the anchor.
     assert (
         MAINTAINERS_DIGEST
         == "3da7aa58d6192b2414a2b0684f51e89c16a00cc2d90fa851ed25e36c216d0efa"  # pragma: allowlist secret
     ), MAINTAINERS
-    for path, *handles in rules:
-        assert handles == MAINTAINERS, f"{path} is owned by {handles}"
+    for path, *handles in rules[1:]:
+        # One owner, for routing: main does not require code owners' review, so
+        # an owner who is away never blocks an area (CONTRIBUTING.md).
+        assert len(handles) == 1, f"{path} needs exactly one owner, has {handles}"
+        assert set(handles) <= set(MAINTAINERS), f"{path} is owned by {handles}"
+    # A broader directory listed after a narrower one would win for its files.
+    for i, earlier in enumerate(paths[1:], start=1):
+        for later in paths[i + 1 :]:
+            assert not (earlier != later and earlier.startswith(later)), (
+                f"{later} comes after {earlier} and shadows it"
+            )
     names = (
         "Artemio Padilla",
         "Emmanuel Hernandez",
@@ -112,3 +152,50 @@ def test_codeowners_routes_every_path_to_the_maintainers():
     assert len(MAINTAINERS) == len(names), MAINTAINERS
     for name in names:
         assert name in contributors, name
+
+
+_IAM_RESOURCE = re.compile(
+    r'^resource\s+"aws_iam_(role|role_policy|policy|role_policy_attachment|'
+    r'policy_attachment|instance_profile)"',
+    re.M,
+)
+SECURITY_OWNER = "@emolvera"
+
+
+def test_every_terraform_file_that_defines_iam_is_routed_to_security():
+    """A new IAM role or policy goes to the security owner wherever it is defined.
+
+    IAM is spread over many modules besides modules/iam/, so the security lines
+    name each file; a file that starts defining one fails here until it is added.
+    """
+    rules = {
+        line.split()[0]: line.split()[1:]
+        for line in CODEOWNERS.read_text().splitlines()
+        if line.strip() and not line.startswith("#")
+    }
+    tracked = subprocess.run(
+        ["git", "ls-files", "*.tf"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    defining = [
+        f
+        for f in tracked
+        if _IAM_RESOURCE.search((ROOT / f).read_text(encoding="utf-8"))
+    ]
+    assert defining, "found no Terraform file that defines IAM"
+    unrouted = []
+    for f in defining:
+        owners = next(
+            (
+                rules[path]
+                for path in sorted(rules, key=len, reverse=True)
+                if path != "*" and ("/" + f).startswith(path)
+            ),
+            [],
+        )
+        if owners != [SECURITY_OWNER]:
+            unrouted.append(f)
+    assert unrouted == [], f"add {unrouted} to the security lines in .github/CODEOWNERS"

@@ -398,7 +398,7 @@ data "archive_file" "agent_source_zip" {
   # never read by the agent, and zipping them rebuilt the image on every deploy.
   # The fixed names only ever match at the project root; caches and
   # credentials at any depth come from agent_source_filter_excludes.
-  excludes = concat(["__pycache__", "*.pyc", "*.pyo", ".pytest_cache", ".venv", "handlers", "infra-terraform", "node_modules", ".git", ".socialagent", "socialagent.dev.yaml", "socialagent.test.yaml", "socialagent.prod.yaml"], local.agent_source_filter_excludes)
+  excludes = concat(["__pycache__", "*.pyc", "*.pyo", ".pytest_cache", ".venv", "handlers", "infrastructure", "infra-terraform", "node_modules", ".git", ".socialagent", "socialagent.dev.yaml", "socialagent.test.yaml", "socialagent.prod.yaml"], local.agent_source_filter_excludes)
 }
 
 resource "aws_s3_object" "agent_source_zip" {

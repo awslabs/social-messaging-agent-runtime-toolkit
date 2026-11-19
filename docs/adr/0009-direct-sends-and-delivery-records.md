@@ -4,7 +4,7 @@ title: "Tools send when called; the toolkit records every message it delivers"
 status: Proposed
 date: 2026-10-16
 deciders: SMART maintainers
-supersedes: [ADR-0002, ADR-0006]
+supersedes: []
 superseded_by: null
 tags: [messaging, memory, security]
 ---
@@ -63,7 +63,7 @@ Question for the maintainers: accept the single send path, including the webhook
 - **Media upload moves, it does not go away.** Converting an S3 `link` into a `media_id` moves from the webhook to the notification Lambda, so recipes keep working unchanged and the conversion sits under the notification role's IAM grants (M29) instead of a code check alone. It also fixes the broken link `immediate=True` sends today.
 - **Removed:** the queue and the `outbound_messages` contract, `immediate`, `log_to_memory` and `memory_text` on `notify`, the webhook drain and its recipient override, and two Known Issues entries in `AGENTS.md`.
 - **Compatibility.** The webhook keeps a reader for `outbound_messages` from older vendored runtimes and logs a deprecation warning; `SOCIALAGENT_VERSION` is bumped. History written before this change has no receipts and restores through the fallback.
-- **Acceptance updates three records at once.** `supersedes` here is not checked against the older records: `tests/test_adr_format.py` validates each record's own front matter, the index entry and its status, but not that ADR-0002 and ADR-0006 name this record in `superseded_by`. So the change that accepts this record must, in the same commit, set this record to `Accepted` with a real Enforced-by list, set ADR-0002 and ADR-0006 to `status: Superseded by ADR-0009` and `superseded_by: ADR-0009` (front matter and table), and update all three rows of the `docs/adr/README.md` index. Otherwise the index says two decisions are in force that contradict this one.
+- **Acceptance updates three records at once.** While this record is Proposed it replaces nothing, so its `supersedes` stays empty. `tests/test_adr_format.py` validates each record's own front matter, the index entry and its status, but not that a record's `supersedes` and the older records' `superseded_by` agree. So the change that accepts this record must, in the same commit, set this record to `Accepted` with `supersedes: [ADR-0002, ADR-0006]` and a real Enforced-by list, set ADR-0002 and ADR-0006 to `status: Superseded by ADR-0009` and `superseded_by: ADR-0009` (front matter and table), and update all three rows of the `docs/adr/README.md` index. Otherwise the index says two decisions are in force that contradict this one.
 - **The webhook gets a memory writer**, for delivery records only. This reverses ADR-0006's "the webhook never writes"; out-of-band writes are unchanged.
 
 ### What changes, by file
