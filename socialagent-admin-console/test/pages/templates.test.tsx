@@ -11,7 +11,7 @@ import type { WhatsAppTemplate } from "@/types";
 // resolving to src/api/__mocks__/client.ts.
 
 function template(name: string, extra: Partial<WhatsAppTemplate> = {}): WhatsAppTemplate {
-  return { name, stack: "bot-dev", category: "MARKETING", language: "en", approvalStatus: "approved", lastSynced: "2024-07-01", ...extra };
+  return { name, stack: "bot-dev", category: "MARKETING", language: "en", approvalStatus: "approved", ...extra };
 }
 
 async function showing(templates: WhatsAppTemplate[], failedStacks: string[] = []) {

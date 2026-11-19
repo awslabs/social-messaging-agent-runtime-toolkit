@@ -9,6 +9,7 @@ All notable changes to SMART, the Social Messaging Agent Runtime Toolkit, are re
 
 ### Fixed
 - `state.get` returns `None` for an item whose `ttl` has passed, instead of the old value until DynamoDB's background sweep deletes it, which can take days. Agent-side `list_keys` and `list_items` skip such an item too, so they agree with `get`; `delete_prefix` still deletes it. `claim_once` (agent and Lambda side) and `compare_and_set` treat such an item as absent too: an expired `claim#` marker or value no longer refuses a new claim or `expected=None`, and an expired value never matches `expected`. The Lambda-side fix reaches a stack with the next deploy; the agent-side fix reaches an existing project only when its vendored `socialagent_runtime/` is replaced (`socialagent runtime update`) (#56).
+- The admin console's Templates page no longer has a "Last synced" column. Nothing records when a template was last synced, so the column showed the time the page was loaded.
 
 ## [2026.11.0] - 2026-11-13
 

@@ -347,7 +347,7 @@ describe("api.listTemplates", () => {
   });
 
   const listed: WhatsAppTemplate = {
-    name: "dev_bot_welcome", stack: "bot-dev", category: "UTILITY", language: "en", approvalStatus: "approved", lastSynced: "2024-07-01",
+    name: "dev_bot_welcome", stack: "bot-dev", category: "UTILITY", language: "en", approvalStatus: "approved",
   };
 
   /** Two registered stacks; big-prod's templates request times out at the API. */
