@@ -1,0 +1,32 @@
+---
+title: SMART documentation
+description: Social Messaging Agent Runtime Toolkit, a Python SDK for building WhatsApp chatbots on AWS.
+template: splash
+hero:
+  tagline: Build WhatsApp chatbots on AWS. Bring your agent logic; SMART handles webhooks, message parsing, templates, memory, scheduling, and infrastructure.
+  actions:
+    - text: Get started
+      link: /social-messaging-agent-runtime-toolkit/getting-started/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/awslabs/social-messaging-agent-runtime-toolkit
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <Card title="Architecture" icon="puzzle">
+    The two-layer model, the message flow, and the notify paths. Start with [Architecture](/social-messaging-agent-runtime-toolkit/architecture/).
+  </Card>
+  <Card title="Build a bot" icon="rocket">
+    Scaffold, configure and deploy: [Getting Started](/social-messaging-agent-runtime-toolkit/getting-started/) and [Building with SMART](/social-messaging-agent-runtime-toolkit/building-with-socialagent/).
+  </Card>
+  <Card title="Decisions" icon="open-book">
+    The reasons behind the rules, in [Architecture Decision Records](/social-messaging-agent-runtime-toolkit/adr/).
+  </Card>
+  <Card title="Security" icon="approve-check">
+    Trust boundaries and mitigations in the [threat model](/social-messaging-agent-runtime-toolkit/threat-model/), and [data flows](/social-messaging-agent-runtime-toolkit/data-flows/) outside the stack's Region.
+  </Card>
+</CardGrid>
