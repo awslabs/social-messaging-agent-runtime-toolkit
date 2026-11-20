@@ -69,6 +69,8 @@ socialagent status           # the stack and its outputs
 
 The agent container is built by CodeBuild during the apply; no local Docker is needed. After the first deploy, associate the SNS topic ARN in the outputs with your EUM Social phone number (one-time, in the AWS Console).
 
+On a stack's first deploy, IAM can take a minute to apply the roles and policies the apply has just created. A CodeBuild build (the Lambda layer, the agent image, the zip package or the template sync) that CodeBuild cannot start for that reason fails in its `QUEUED` phase with `CLIENT_ERROR` and runs nothing, so the apply starts it again, up to six times in all, 20, 40, 60, 80 and 100 seconds apart; a build that ran and failed fails the apply at once. Rarely, the AWS provider retries a `CreateRole` that IAM had already done and fails with `EntityAlreadyExists` for a role that is not in the state. Check that the role carries the stack's `Project` and `Environment` tags and has no policies attached (`aws iam list-attached-role-policies` and `aws iam list-role-policies`), delete it (`aws iam delete-role --role-name <name>`), and run `socialagent deploy` again.
+
 ### Contributor path: the same stack, from the repo
 
 When working on the Terraform itself, drive a stack from the repository root with the project's YAML as the only input. `ENV=<project>-<env>` names a project under `projects/` and its environment; each target runs the `socialagent` CLI in that project, which writes the tfvars, selects the workspace and runs Terraform:
