@@ -27,7 +27,9 @@ from botocore.exceptions import ClientError
 import socialagent.providers.eum_social as eum
 from socialagent.handlers.event import EventContext
 from socialagent.handlers.webhook import make_webhook_handler
-from socialagent.providers.eum_social import EUMSocialProvider, TemplateNotApprovedError
+from socialagent.handlers.scheduled import is_retryable
+from socialagent.providers import TemplateNotApprovedError
+from socialagent.providers.eum_social import EUMSocialProvider
 from socialagent.types import StatusUpdate
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -55,6 +57,7 @@ def _provider(
     p._approved_until = {}
     p._message_gap_seconds = 0
     p._client = MagicMock()
+    p._lookup_client = p._client
     p._client.get_linked_whatsapp_business_account_phone_number.return_value = {
         "linkedWhatsAppBusinessAccountId": "waba-1"
     }
@@ -134,6 +137,61 @@ def test_the_listing_is_read_across_pages() -> None:
     ]
     _send(p)
     assert len(sent) == 1
+
+
+def test_the_listing_is_read_only_up_to_the_template() -> None:
+    """A later page is never read, so it cannot fail after the template's
+    status is known and send a template already seen PENDING."""
+    p, sent = _provider()
+    p._client.list_whatsapp_message_templates.side_effect = [
+        {
+            "templates": [_template("dev_pa_reminder_clean", "PENDING")],
+            "nextToken": "t",
+        },
+        ClientError(
+            {"Error": {"Code": "ThrottledRequestException", "Message": "slow"}},
+            "ListWhatsAppMessageTemplates",
+        ),
+    ]
+    with pytest.raises(TemplateNotApprovedError):
+        _send(p)
+    assert p._client.list_whatsapp_message_templates.call_count == 1
+    assert sent == []
+
+
+def test_a_refusal_is_logged_without_the_number(caplog) -> None:
+    p, _ = _provider(_template("dev_pa_reminder_clean", "PENDING"))
+    with (
+        caplog.at_level(logging.WARNING, logger=eum.logger.name),
+        pytest.raises(TemplateNotApprovedError),
+    ):
+        _send(p)
+    line = next(
+        r.getMessage() for r in caplog.records if "not sending it" in r.getMessage()
+    )
+    assert "dev_pa_reminder_clean (es_MX) is PENDING" in line
+    assert "0100" not in line
+
+
+def test_the_lookup_has_a_short_time_budget(monkeypatch) -> None:
+    """It runs before a send, often late in the Lambda's time, so it must not
+    inherit the send client's 60 s timeouts and legacy retries."""
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
+    config = EUMSocialProvider(
+        phone_number_id="phone-number-id-1"
+    )._lookup_client.meta.config
+    assert (config.connect_timeout, config.read_timeout) == (2, 3)
+    assert config.retries == {"mode": "standard", "total_max_attempts": 2}
+
+
+def test_a_refused_scheduled_send_is_not_tried_again() -> None:
+    """with_retry matches "500" and "503" in an error's text, and a template
+    name can hold either."""
+    assert not is_retryable(
+        TemplateNotApprovedError("dev_shop500_reminder_clean", "es_MX", "PENDING")
+    )
+    assert not is_retryable(TemplateNotApprovedError("dev_pa_promo_503", "en", ""))
 
 
 def test_a_failed_lookup_sends_the_template_unchecked(caplog) -> None:
