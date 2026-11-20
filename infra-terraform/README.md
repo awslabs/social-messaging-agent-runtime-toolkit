@@ -209,7 +209,26 @@ The stack uses AWS-managed keys and service defaults (the `ENCRYPTION POSTURE` c
 socialagent destroy --env dev        # from the project; make tf-destroy ENV=my-bot-dev from the repository root
 ```
 
-Destroys all resources including AgentCore Runtime, Memory, ECR repository, and all Lambda functions.
+Destroys the stack resources, including AgentCore Runtime, Memory, the ECR repository, and all Lambda functions. Secrets Manager keeps deleted secrets in a seven-day recovery window, however. Recreating the same project and environment during that window can therefore fail because names such as `dev-my-bot-event-webhook-secret` are still reserved. `enable_force_destroy` applies to non-empty buckets and does not bypass this recovery window.
+
+For a development stack that must reuse the same name immediately, first inspect the scheduled secret and confirm that its `Project` and `Environment` tags identify the stack you just destroyed:
+
+```bash
+SECRET_NAME=dev-my-bot-event-webhook-secret
+aws secretsmanager describe-secret \
+  --secret-id "$SECRET_NAME" \
+  --query '{Name:Name,DeletedDate:DeletedDate,Tags:Tags}'
+```
+
+Only when `DeletedDate` is set and both tags match exactly, permanently delete that specific secret:
+
+```bash
+aws secretsmanager delete-secret \
+  --secret-id "$SECRET_NAME" \
+  --force-delete-without-recovery
+```
+
+This deletion cannot be undone. Never force-delete a secret based on its name alone, and do not use this shortcut for a production secret. AWS completes forced deletion asynchronously, so wait until `describe-secret` reports that the secret is not found before redeploying. If another project secret blocks recreation, repeat the same tag check and explicit deletion for that exact secret.
 
 ## Module Reference
 
