@@ -8,6 +8,7 @@ All notable changes to SMART, the Social Messaging Agent Runtime Toolkit, are re
 - The Release workflow also publishes a patch release tagged on its line's release branch (`v2026.11.1` on `release/2026.11`), which has the same protection as `main`; a tag on any other branch, or on another line's release branch, is still refused (#140).
 
 ### Fixed
+- The admin console's per-stack and global State views return a non-number DynamoDB `ttl` as `null` instead of failing the stack's state scan or silently omitting later entries; Boolean `ttl` values are non-numeric for this purpose (#222).
 - `state.get` returns `None` for an item whose `ttl` has passed, instead of the old value until DynamoDB's background sweep deletes it, which can take days. Agent-side `list_keys` and `list_items` skip such an item too, so they agree with `get`; `delete_prefix` still deletes it. `claim_once` (agent and Lambda side) and `compare_and_set` treat such an item as absent too: an expired `claim#` marker or value no longer refuses a new claim or `expected=None`, and an expired value never matches `expected`. The Lambda-side fix reaches a stack with the next deploy; the agent-side fix reaches an existing project only when its vendored `socialagent_runtime/` is replaced (`socialagent runtime update`) (#56).
 
 ## [2026.11.0] - 2026-11-13

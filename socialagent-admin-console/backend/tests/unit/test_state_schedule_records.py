@@ -12,6 +12,7 @@ their partition as a user.
 """
 
 import json
+from decimal import Decimal
 
 import boto3
 import pytest
@@ -35,7 +36,10 @@ def state_routes(monkeypatch):
     with mock_aws():
         boto3.client("dynamodb", region_name="us-east-1").create_table(
             TableName=TABLE,
-            KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}, {"AttributeName": "sk", "KeyType": "RANGE"}],
+            KeySchema=[
+                {"AttributeName": "pk", "KeyType": "HASH"},
+                {"AttributeName": "sk", "KeyType": "RANGE"},
+            ],
             AttributeDefinitions=[
                 {"AttributeName": "pk", "AttributeType": "S"},
                 {"AttributeName": "sk", "AttributeType": "S"},
@@ -43,13 +47,49 @@ def state_routes(monkeypatch):
             BillingMode="PAY_PER_REQUEST",
         )
         table = boto3.resource("dynamodb", region_name="us-east-1").Table(TABLE)
-        table.put_item(Item={"pk": PHONE, "sk": "counter#visits", "data": json.dumps(3), "ttl": 0})
-        table.put_item(Item={
-            "pk": SCHEDULE_PK,
-            "sk": "firing#2026-11-04T09:00:00Z",
-            "data": json.dumps(True),
-            "ttl": 1762419600,
-        })
+        table.put_item(
+            Item={"pk": PHONE, "sk": "counter#visits", "data": json.dumps(3), "ttl": 0}
+        )
+        table.put_item(
+            Item={
+                "pk": PHONE,
+                "sk": "number#fractional",
+                "data": json.dumps(4),
+                "ttl": Decimal("2.5"),
+            }
+        )
+        table.put_item(
+            Item={
+                "pk": PHONE,
+                "sk": "invalid#string",
+                "data": json.dumps("a"),
+                "ttl": "never",
+            }
+        )
+        table.put_item(
+            Item={
+                "pk": PHONE,
+                "sk": "invalid#null",
+                "data": json.dumps("b"),
+                "ttl": None,
+            }
+        )
+        table.put_item(
+            Item={
+                "pk": PHONE,
+                "sk": "invalid#boolean",
+                "data": json.dumps("c"),
+                "ttl": True,
+            }
+        )
+        table.put_item(
+            Item={
+                "pk": SCHEDULE_PK,
+                "sk": "firing#2026-11-04T09:00:00Z",
+                "data": json.dumps(True),
+                "ttl": 1762419600,
+            }
+        )
         yield state
 
 
@@ -58,12 +98,26 @@ def _body(resp) -> list:
     return json.loads(resp["body"])
 
 
-def test_stack_state_leaves_out_firing_records(state_routes):
+def test_stack_state_normalizes_ttls_and_leaves_out_firing_records(state_routes):
     entries = _body(state_routes.handle_get_state({"id": "bot-dev"}, {}))
-    assert entries == [{"phone": PHONE, "key": "counter#visits", "value": 3, "ttl": 0}]
-
-
-def test_global_state_leaves_out_firing_records(state_routes):
-    entries = _body(state_routes.handle_list_all_state({}, {}))
-    assert entries == [{"phone": PHONE, "key": "counter#visits", "value": 3, "ttl": 0, "stack": "bot-dev"}]
+    assert {entry["key"]: entry["ttl"] for entry in entries} == {
+        "counter#visits": 0,
+        "number#fractional": 2.5,
+        "invalid#string": None,
+        "invalid#null": None,
+        "invalid#boolean": None,
+    }
     assert {entry["phone"] for entry in entries} == {PHONE}
+
+
+def test_global_state_normalizes_ttls_and_leaves_out_firing_records(state_routes):
+    entries = _body(state_routes.handle_list_all_state({}, {}))
+    assert {entry["key"]: entry["ttl"] for entry in entries} == {
+        "counter#visits": 0,
+        "number#fractional": 2.5,
+        "invalid#string": None,
+        "invalid#null": None,
+        "invalid#boolean": None,
+    }
+    assert {entry["phone"] for entry in entries} == {PHONE}
+    assert {entry["stack"] for entry in entries} == {"bot-dev"}

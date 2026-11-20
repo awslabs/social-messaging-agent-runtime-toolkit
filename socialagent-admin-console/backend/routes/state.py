@@ -2,17 +2,22 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """State routes: per-stack state, delete key, cross-stack list."""
+
 from __future__ import annotations
 
 import json
 import re
+from decimal import Decimal
 
 import boto3
 
 from shared.auth import require_group
 from shared.aws import REGION
 from shared.http import error_response as _error, json_response as _json
-from shared.registry import get_registry as _get_registry, get_all_registries as _get_all_registries
+from shared.registry import (
+    get_registry as _get_registry,
+    get_all_registries as _get_all_registries,
+)
 from shared.resolver import app, from_legacy
 
 # SMART state tables are always named "<project>-<env>-state". Validate the
@@ -37,6 +42,17 @@ _SCHEDULE_PK_PREFIX = "_schedule#"
 def _is_schedule_record(item: dict) -> bool:
     pk = item.get("pk", "")
     return isinstance(pk, str) and pk.startswith(_SCHEDULE_PK_PREFIX)
+
+
+def _state_ttl(item: dict) -> int | float | None:
+    """Return a JSON number for a DynamoDB Number TTL, otherwise null."""
+    ttl = item.get("ttl")
+    if isinstance(ttl, bool) or not isinstance(ttl, (int, float, Decimal)):
+        return None
+    if isinstance(ttl, Decimal):
+        return int(ttl) if ttl == ttl.to_integral_value() else float(ttl)
+    return ttl
+
 
 def handle_delete_state_key(params, body):
     """Delete a single key from the state table, phone and key from the JSON body.
@@ -93,12 +109,14 @@ def handle_get_state(params, _body):
                     value = json.loads(raw) if isinstance(raw, str) else raw
                 except (json.JSONDecodeError, TypeError):
                     value = raw
-                result.append({
-                    "phone": item.get("pk", ""),
-                    "key": item.get("sk", ""),
-                    "value": value,
-                    "ttl": int(item.get("ttl", 0)),
-                })
+                result.append(
+                    {
+                        "phone": item.get("pk", ""),
+                        "key": item.get("sk", ""),
+                        "value": value,
+                        "ttl": _state_ttl(item),
+                    }
+                )
             lek = resp.get("LastEvaluatedKey")
             if not lek:
                 break
@@ -132,13 +150,15 @@ def handle_list_all_state(_params, _body):
                         value = json.loads(raw) if isinstance(raw, str) else raw
                     except (json.JSONDecodeError, TypeError):
                         value = raw
-                    all_entries.append({
-                        "phone": item.get("pk", ""),
-                        "key": item.get("sk", ""),
-                        "value": value,
-                        "ttl": int(item.get("ttl", 0)),
-                        "stack": sid,
-                    })
+                    all_entries.append(
+                        {
+                            "phone": item.get("pk", ""),
+                            "key": item.get("sk", ""),
+                            "value": value,
+                            "ttl": _state_ttl(item),
+                            "stack": sid,
+                        }
+                    )
                 lek = resp.get("LastEvaluatedKey")
                 if not lek or len(all_entries) >= 2000:
                     break
@@ -146,7 +166,6 @@ def handle_list_all_state(_params, _body):
         except Exception:
             continue
     return _json(200, all_entries)
-
 
 
 @app.get("/api/stacks/<id>/state")
@@ -160,6 +179,7 @@ def get_state(id: str):
 def delete_state_key(id: str):
     """Delete a state key with phone+key in the JSON body (safe for + and #)."""
     from shared.resolver import current_body
+
     body = current_body()
     return from_legacy(handle_delete_state_key({"id": id}, body))
 
