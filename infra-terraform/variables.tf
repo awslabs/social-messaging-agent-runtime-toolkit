@@ -157,7 +157,7 @@ variable "enable_state_table" {
 }
 
 variable "enable_pii_log_protection" {
-  description = "Enable CloudWatch Logs data protection to automatically mask PII (phone numbers, names, emails)."
+  description = "Enable CloudWatch Logs data protection to automatically mask PII (phone numbers, names, emails) in the Lambda log groups and the agent runtime's, where it also masks numbers with a leading + in the usual formats, national numbers written in groups, the session ids that hold one and the schedule ids the runtime generates from one."
   type        = bool
   default     = true
 }
@@ -416,7 +416,7 @@ variable "secrets" {
 # =============================================================================
 
 variable "agent_environment_variables" {
-  description = "Additional environment variables passed to the AgentCore Runtime agent container. MODEL_ID also reaches the webhook Lambda. Keys starting with BEDROCK_GUARDRAIL_ are reserved: Terraform sets BEDROCK_GUARDRAIL_ID and BEDROCK_GUARDRAIL_VERSION from guardrail and guardrail_version (docs/configuration.md, Guardrails)."
+  description = "Additional environment variables passed to the AgentCore Runtime agent container. MODEL_ID also reaches the webhook Lambda. Keys starting with BEDROCK_GUARDRAIL_ are reserved: Terraform sets BEDROCK_GUARDRAIL_ID and BEDROCK_GUARDRAIL_VERSION from guardrail and guardrail_version (docs/configuration.md, Guardrails). The stack sets OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT to false, and a value here replaces it (docs/configuration.md, The agent runtime's log group)."
   type        = map(string)
   default     = {}
 
@@ -473,7 +473,7 @@ variable "memory_event_expiry_days" {
 }
 
 variable "log_retention_days" {
-  description = "Days the event API's two CloudWatch log groups keep their logs: the event authorizer Lambda's and the API Gateway access logs. It sets no other log group: the webhook, notification, event and scheduler Lambda log groups keep 30 days."
+  description = "Days the event API's two CloudWatch log groups keep their logs: the event authorizer Lambda's and the API Gateway access logs. It sets no other log group: the webhook, notification, event and scheduler Lambda log groups and the agent runtime's keep 30 days."
   type        = number
   default     = 30
 }

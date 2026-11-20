@@ -47,9 +47,10 @@ agent_image_tag = "latest"
 # PII log masking (CloudWatch Logs data protection)
 # -----------------------------------------------------------------------------
 
-# enable_pii_log_protection  = true          # Mask phone numbers, names, emails in Lambda logs
+# enable_pii_log_protection  = true          # Mask phone numbers, names, emails in the Lambda and agent runtime logs
 # pii_phone_number_countries = ["US", "BR"]  # CWL-supported only: BR, DE, ES, FR, GB, IT, US
-                                              # (+1 US/Canada -> "US"; Mexico/+52 NOT supported by CloudWatch Logs)
+                                              # (+1 US/Canada -> "US"; Mexico/+52 NOT supported by CloudWatch Logs;
+                                              # the runtime's log group also masks a +number in the usual formats and a national number written in groups)
 
 # -----------------------------------------------------------------------------
 # Authentication (optional — secures AgentCore Runtime with JWT)

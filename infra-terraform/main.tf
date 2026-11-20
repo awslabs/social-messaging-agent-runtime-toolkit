@@ -416,6 +416,17 @@ module "runtime" {
       ENVIRONMENT                      = var.environment
       BEDROCK_GUARDRAIL_ID             = local.effective_guardrail_id
       BEDROCK_GUARDRAIL_VERSION        = local.effective_guardrail_version
+
+      # AgentCore Runtime sets AGENT_OBSERVABILITY_ENABLED, under which
+      # aws-opentelemetry-distro defaults this to true, and the Bedrock
+      # instrumentation then logs every model call's whole request (system
+      # prompt, restored history, tool inputs and results, image and document
+      # bytes) to the runtime's log group. The distro keeps a value already
+      # set, so agent.environment, merged below, can turn it back on. Strands
+      # records each turn on its own spans whatever this says, and that copy
+      # stays: AgentCore Evaluations and the GenAI Observability prompt views
+      # read it.
+      OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT = "false"
     },
     var.agent_environment_variables,
   )
@@ -641,6 +652,9 @@ module "monitoring" {
   kms_key_arn                = var.sns_kms_key_arn
   enable_pii_protection      = var.enable_pii_log_protection
   pii_phone_number_countries = var.pii_phone_number_countries
+
+  # The agent runtime's log group, kept and masked like the Lambda log groups.
+  runtime_log_group_name = module.observability.runtime_log_group
 
   # No depends_on, for the same reason as module.event_api above: the log groups
   # are for_each'd over lambda_function_names, so the dependency is already
