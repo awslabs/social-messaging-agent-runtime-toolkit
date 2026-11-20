@@ -48,6 +48,29 @@ class MediaTooLarge(RuntimeError):
         self.max_bytes = max_bytes
 
 
+class TemplateNotApprovedError(RuntimeError):
+    """A template send refused because Meta has not approved the template.
+
+    EUM Social accepts a send of a template that is not approved, and WhatsApp
+    drops it later, reported only as a failed delivery status. Refusing it
+    before the send lets the caller fall back, for example to text.
+    """
+
+    def __init__(self, name: str, language: str, status: str) -> None:
+        super().__init__(
+            f"template {name} ({language}) is {status or 'not on the WhatsApp Business Account'}, not APPROVED"
+        )
+        self.name = name
+        self.language = language
+        self.status = status
+
+
+# How long a template found APPROVED is sent without checking again. Meta can
+# pause an approved template, so the answer is not kept for the container's
+# life; one that is not approved is checked on every send, so its approval
+# takes effect on the next one.
+_APPROVED_TEMPLATE_TTL_SECONDS = 300.0
+
 # Top-level keys of a WhatsApp send that the provider owns, never the payload.
 # recipient_type is one because it decides what "to" addresses (a user or a group).
 _ENVELOPE_KEYS = frozenset({"messaging_product", "recipient_type", "to", "type"})
@@ -83,6 +106,9 @@ class EUMSocialProvider(MessageProvider):
         self._message_gap_seconds = message_gap_seconds
         self._client = boto3.client("socialmessaging", region_name=region)
         self._waba_id: str = ""  # lazy-loaded on first template sync call
+        # (full template name, language) -> time.monotonic() until which the
+        # template counts as approved without a lookup.
+        self._approved_until: dict[tuple[str, str], float] = {}
 
     # ── Inbound ───────────────────────────────────────────────────────────────
 
@@ -200,10 +226,18 @@ class EUMSocialProvider(MessageProvider):
         header_params: list[str] | None = None,
         button_payloads: list[str] | None = None,
     ) -> str:
-        """Send a pre-approved WhatsApp template message. Returns the message ID."""
+        """Send a pre-approved WhatsApp template message. Returns the message ID.
+
+        Raises:
+            TemplateNotApprovedError: the WhatsApp Business Account lists the
+                template in ``language`` with a status other than APPROVED, or
+                does not list it. Nothing is sent. When the lookup itself
+                fails, the template is sent unchecked, as before the check.
+        """
         if not to.startswith("+"):
             to = f"+{to}"
         full_name = f"{self._template_prefix}{name}" if self._template_prefix else name
+        await asyncio.to_thread(self._require_approved, full_name, language)
         components: list[dict] = []
         if header_params:
             components.append(
@@ -395,32 +429,62 @@ class EUMSocialProvider(MessageProvider):
 
         Paginates through all results.
         """
+        return await asyncio.to_thread(self._list_templates, prefix)
 
-        def _list() -> list[dict]:
-            waba_id = self._get_waba_id()
-            results: list[dict] = []
-            kwargs: dict = {"id": waba_id, "maxResults": 100}
-            while True:
-                resp = self._client.list_whatsapp_message_templates(**kwargs)
-                for t in resp.get("templates", []):
-                    name: str = t.get("templateName", "")
-                    if not prefix or name.startswith(prefix):
-                        results.append(
-                            {
-                                "name": name,
-                                "metaTemplateId": t.get("metaTemplateId", ""),
-                                "category": t.get("templateCategory", ""),
-                                "language": t.get("templateLanguage", ""),
-                                "status": t.get("templateStatus", ""),
-                            }
-                        )
-                next_token = resp.get("nextToken")
-                if not next_token:
-                    break
-                kwargs["nextToken"] = next_token
-            return results
+    def _list_templates(self, prefix: str = "") -> list[dict]:
+        waba_id = self._get_waba_id()
+        results: list[dict] = []
+        kwargs: dict = {"id": waba_id, "maxResults": 100}
+        while True:
+            resp = self._client.list_whatsapp_message_templates(**kwargs)
+            for t in resp.get("templates", []):
+                name: str = t.get("templateName", "")
+                if not prefix or name.startswith(prefix):
+                    results.append(
+                        {
+                            "name": name,
+                            "metaTemplateId": t.get("metaTemplateId", ""),
+                            "category": t.get("templateCategory", ""),
+                            "language": t.get("templateLanguage", ""),
+                            "status": t.get("templateStatus", ""),
+                        }
+                    )
+            next_token = resp.get("nextToken")
+            if not next_token:
+                break
+            kwargs["nextToken"] = next_token
+        return results
 
-        return await asyncio.to_thread(_list)
+    def _require_approved(self, full_name: str, language: str) -> None:
+        """Raise TemplateNotApprovedError unless the WABA lists the template
+        APPROVED in ``language``. A lookup that fails lets the send go ahead
+        unchecked, so a missing grant or a throttle loses no message that went
+        out before the check existed."""
+        key = (full_name, language)
+        if self._approved_until.get(key, 0.0) > time.monotonic():
+            return
+        try:
+            templates = self._list_templates(full_name)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "Could not check template %s (%s) before sending it, sending it unchecked: %s: %s",
+                full_name,
+                language,
+                type(e).__name__,
+                mask_phone(str(e)),
+            )
+            return
+        status = next(
+            (
+                t["status"]
+                for t in templates
+                if t["name"] == full_name and t["language"] == language
+            ),
+            "",
+        )
+        if status != "APPROVED":
+            raise TemplateNotApprovedError(full_name, language, status)
+        self._approved_until[key] = time.monotonic() + _APPROVED_TEMPLATE_TTL_SECONDS
 
     async def register_template(self, template: dict, prefix: str = "") -> None:
         """Create or update a template with the WABA.

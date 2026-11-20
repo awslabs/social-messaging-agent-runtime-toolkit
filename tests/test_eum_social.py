@@ -613,6 +613,8 @@ async def test_send_template_accepts_non_str_params(monkeypatch) -> None:
     """
     provider = _provider()
     provider._template_prefix = ""
+    # Approved, so the send skips the approval lookup (tests/test_template_approval.py).
+    provider._approved_until = {("order_confirmed", "en_US"): float("inf")}
     captured = {}
 
     def _fake_send_raw(payload):
