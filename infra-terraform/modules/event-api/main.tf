@@ -235,8 +235,18 @@ resource "aws_api_gateway_integration_response" "ok" {
 # Deploy
 resource "aws_api_gateway_deployment" "events" {
   rest_api_id = aws_api_gateway_rest_api.events.id
-  triggers    = { redeployment = sha1(jsonencode([aws_api_gateway_resource.events, aws_api_gateway_method.post_event, aws_api_gateway_integration.sns])) }
-  depends_on  = [aws_api_gateway_integration.sns]
+  triggers = {
+    redeployment = sha1(jsonencode([
+      aws_api_gateway_resource.events.id,
+      aws_api_gateway_method.post_event.id,
+      aws_api_gateway_integration.sns.id,
+      aws_api_gateway_integration.sns.uri,
+      aws_api_gateway_integration.sns.request_templates,
+      aws_api_gateway_integration.sns.request_parameters,
+      aws_api_gateway_integration.sns.credentials,
+    ]))
+  }
+  depends_on = [aws_api_gateway_integration.sns]
   lifecycle { create_before_destroy = true }
 }
 
