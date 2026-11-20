@@ -10,6 +10,27 @@ from abc import ABC, abstractmethod
 from socialagent.types import InboundMessage, OutboundMessage, StatusUpdate
 
 
+class TemplateNotApprovedError(RuntimeError):
+    """A template send refused because Meta has not approved the template.
+
+    EUM Social accepts a send of a template that is not approved, and WhatsApp
+    drops it later, reported only as a failed delivery status. Refusing it
+    before the send lets the caller fall back, for example to text.
+
+    ``name`` is the full template name, with the stack's prefix. ``status`` is
+    the one the WhatsApp Business Account lists, or ``""`` when it does not
+    list the template in ``language``.
+    """
+
+    def __init__(self, name: str, language: str, status: str) -> None:
+        super().__init__(
+            f"template {name} ({language}) is {status or 'not on the WhatsApp Business Account'}, not APPROVED"
+        )
+        self.name = name
+        self.language = language
+        self.status = status
+
+
 class MessageProvider(ABC):
     """Messaging provider interface.
 
@@ -56,7 +77,12 @@ class MessageProvider(ABC):
         header_params: list[str] | None = None,
         button_payloads: list[str] | None = None,
     ) -> str:
-        """Send a pre-approved template message. Returns the provider message ID."""
+        """Send a pre-approved template message. Returns the provider message ID.
+
+        Raises:
+            TemplateNotApprovedError: the template is known not to be approved
+                in ``language``, so nothing was sent.
+        """
 
     @abstractmethod
     async def send_typing(self, to: str, message_id: str) -> None:

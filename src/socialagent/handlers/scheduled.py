@@ -32,7 +32,7 @@ from botocore.exceptions import (
 from socialagent.constants import SCHEDULE_FIRING_TTL_MINUTES, SCHEDULED_TIME_ATTRIBUTE
 from socialagent.handlers.common import gap_seconds, text_chunks
 from socialagent.handlers.runtime_call import seconds_left
-from socialagent.providers import MessageProvider
+from socialagent.providers import MessageProvider, TemplateNotApprovedError
 from socialagent.state.table import SocialAgentState
 from socialagent.types import OutboundMessage
 from socialagent.utils.phone import mask_phone
@@ -81,6 +81,9 @@ _NEVER_SENT = (EndpointConnectionError, ConnectTimeoutError)
 
 def is_retryable(exc: Exception) -> bool:
     """Return True if the exception looks like a transient, retryable failure."""
+    # Its text holds the template name, which can contain a marker below.
+    if isinstance(exc, TemplateNotApprovedError):
+        return False
     if isinstance(exc, _NEVER_SENT):
         return True
     if (

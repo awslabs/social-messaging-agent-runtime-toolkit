@@ -212,6 +212,16 @@ resource "aws_iam_role_policy" "lambda_custom" {
         Action   = ["social-messaging:SendWhatsAppMessage", "social-messaging:GetWhatsAppMessageMedia", "social-messaging:PostWhatsAppMessageMedia"]
         Resource = "arn:aws:social-messaging:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:phone-number-id/*"
       }],
+      # The webhook sends the templates an agent turn queues. Every template
+      # send first checks that Meta approved the template (EUMSocialProvider
+      # .send_template), as EUM Social accepts one that is not and WhatsApp
+      # drops it later: the number's WABA, then the WABA's templates.
+      [{
+        Sid      = "EUMSocialTemplateStatus"
+        Effect   = "Allow"
+        Action   = ["social-messaging:GetLinkedWhatsAppBusinessAccountPhoneNumber", "social-messaging:ListWhatsAppMessageTemplates"]
+        Resource = ["arn:aws:social-messaging:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:phone-number-id/*", "arn:aws:social-messaging:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:waba/*"]
+      }],
       # Invoke notification Lambda
       [{
         Sid      = "InvokeNotificationService"
