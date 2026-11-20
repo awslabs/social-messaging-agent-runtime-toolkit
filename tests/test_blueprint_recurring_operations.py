@@ -346,10 +346,19 @@ class FakeStateTable:
         ExpressionAttributeNames: dict,
         ExpressionAttributeValues: dict,
     ) -> None:
-        assert ConditionExpression == "attribute_not_exists(sk) OR #ttl < :now"
+        assert (
+            ConditionExpression
+            == "attribute_not_exists(sk) OR (attribute_type(#ttl, :n) AND #ttl < :now)"
+        )
+        assert ExpressionAttributeValues[":n"] == "N"
         key = (Item["pk"], Item["sk"])
         held = self.items.get(key)
-        if held is not None and held["ttl"] >= ExpressionAttributeValues[":now"]:
+        expired = (
+            held is not None
+            and isinstance(held.get("ttl"), int)
+            and held["ttl"] < ExpressionAttributeValues[":now"]
+        )
+        if held is not None and not expired:
             raise ClientError(
                 {"Error": {"Code": "ConditionalCheckFailedException"}}, "PutItem"
             )
