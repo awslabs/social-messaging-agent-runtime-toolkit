@@ -30,6 +30,7 @@ from socialagent.constants import (
 from socialagent.handlers.common import (
     gap_seconds,
     log_delivered,
+    run_handler,
     send_and_log,
     text_chunks,
 )
@@ -372,6 +373,6 @@ def make_event_handler(
         return {"statusCode": 200, "body": "ok"}
 
     def sync_handler(event: dict, _context: object = None) -> dict:
-        return asyncio.run(handler(event, _context))
+        return run_handler(handler(event, _context))
 
     return sync_handler
