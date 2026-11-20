@@ -8,6 +8,8 @@
 
 WhatsApp requires pre-approved message templates for outbound messages to users who haven't messaged you in the last 24 hours. SMART (Social Messaging Agent Runtime Toolkit) provides a YAML-based template registry and a sync command to register templates with Meta via EUM Social.
 
+Templates are also how a business starts a conversation, and whether Meta lets your business start one — and what you must be able to prove about the user's permission — depends on the user's country. See [Regional requirements for Brazil, Indonesia, and the EU](getting-started.md#regional-requirements-for-brazil-indonesia-and-the-eu) before you rely on template messages reaching users there.
+
 ## Defining Templates
 
 Edit `templates.yaml` in your project:
