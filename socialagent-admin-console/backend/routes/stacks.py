@@ -565,11 +565,98 @@ def handle_get_metrics(params, _body):
     return _json(200, metrics)
 
 
+
+_MODEL_DOCS_URL = (
+    "https://github.com/awslabs/social-messaging-agent-runtime-toolkit/"
+    "blob/main/docs/configuration.md#model"
+)
+_NOT_FOUND_CODES = ("ResourceNotFoundException", "ValidationException")
+
+
+def _webhook_model_id(config: dict) -> str:
+    """The MODEL_ID Terraform put on the webhook Lambda, or empty if unset."""
+    webhook = (config.get("outputs") or {}).get("webhook_lambda") or ""
+    if not webhook:
+        return ""
+    region = config.get("region") or REGION
+    try:
+        lam = lambda_client if region == REGION else client("lambda", region)
+        fn = lam.get_function_configuration(FunctionName=webhook)
+    except (ClientError, BotoCoreError):
+        logger.exception("handler_error")
+        return ""
+    env = (fn.get("Environment") or {}).get("Variables") or {}
+    return str(env.get("MODEL_ID") or "").strip()
+
+
+def _foundation_lifecycle(model_id: str, region: str) -> str:
+    """Bedrock lifecycle status for ``model_id``, or empty if it cannot be read.
+
+    Inference profile ids are resolved to the underlying foundation model,
+    which is what carries the LEGACY lifecycle. Failures never break Stack
+    Detail: the warning is a convenience, not a gate.
+    """
+    bedrock = client("bedrock", region)
+    identifiers = [model_id]
+    try:
+        profile = bedrock.get_inference_profile(inferenceProfileIdentifier=model_id)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") not in _NOT_FOUND_CODES:
+            logger.exception("handler_error")
+            return ""
+    except BotoCoreError:
+        logger.exception("handler_error")
+        return ""
+    else:
+        found = []
+        for model in profile.get("models") or []:
+            ident = model.get("modelArn") or model.get("modelId")
+            if ident:
+                found.append(ident)
+        if found:
+            identifiers = found
+    statuses: list[str] = []
+    for ident in identifiers:
+        try:
+            model = bedrock.get_foundation_model(modelIdentifier=ident)
+        except (ClientError, BotoCoreError):
+            logger.exception("handler_error")
+            continue
+        status = (
+            (model.get("modelDetails") or {})
+            .get("modelLifecycle", {})
+            .get("status")
+            or ""
+        )
+        if status == "LEGACY":
+            return "LEGACY"
+        if status:
+            statuses.append(status)
+    return statuses[0] if statuses else ""
+
+
+def _legacy_model_fields(config: dict) -> dict:
+    """Fields for Stack Detail when the deployed model is LEGACY."""
+    model_id = _webhook_model_id(config)
+    if not model_id:
+        return {}
+    status = _foundation_lifecycle(model_id, config.get("region") or REGION)
+    if status != "LEGACY":
+        return {}
+    return {
+        "modelId": model_id,
+        "modelLifecycle": "LEGACY",
+        "modelDocsUrl": _MODEL_DOCS_URL,
+    }
+
+
 def handle_get_stack(params, _body):
     config = _get_registry(params["id"])
     if not config:
         return _json(404, {"error": f"Stack '{params['id']}' not found"})
-    return _json(200, _stack_status(config))
+    status = _stack_status(config)
+    status.update(_legacy_model_fields(config))
+    return _json(200, status)
 
 
 def handle_list_stacks(_params, _body):
