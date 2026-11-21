@@ -29,6 +29,15 @@ from .phone import (
 # masks it before any handler sees the record, whoever installs the handlers.
 install_log_masking()
 
+try:
+    from ._span_masking import install_span_masking
+except ImportError:
+    from _span_masking import install_span_masking  # type: ignore[no-redef]
+
+# The same text recorded on an OpenTelemetry span (ADOT exports every span);
+# masked on the SDK's Span before the span ends, whoever records it.
+install_span_masking()
+
 logger = logging.getLogger(__name__)
 
 
