@@ -302,35 +302,50 @@ resource "null_resource" "trigger_template_sync" {
   provisioner "local-exec" {
     command = <<-EOT
       set -e
-      BUILD_ID=$(aws codebuild start-build \
-        --project-name ${aws_codebuild_project.template_sync.name} \
-        --region ${data.aws_region.current.id} \
-        --query 'build.id' --output text)
-      if [ -z "$BUILD_ID" ] || [ "$BUILD_ID" = "None" ]; then
-        echo "ERROR: could not start the template sync. Check that the AWS CLI is on PATH and that these credentials have codebuild:StartBuild on ${aws_codebuild_project.template_sync.name}." >&2
-        exit 1
-      fi
-      echo "Template sync started: $BUILD_ID"
-      echo "Waiting for build to complete..."
-      ATTEMPTS=0
+      STARTS=1
       while true; do
-        STATUS=$(aws codebuild batch-get-builds --ids "$BUILD_ID" \
+        BUILD_ID=$(aws codebuild start-build \
+          --project-name ${aws_codebuild_project.template_sync.name} \
           --region ${data.aws_region.current.id} \
-          --query 'builds[0].buildStatus' --output text || echo "")
-        case "$STATUS" in
-          SUCCEEDED) echo "Template sync completed"; break ;;
-          FAILED|FAULT|TIMED_OUT|STOPPED)
-            echo "Template sync failed: $STATUS. Logs: /aws/codebuild/${local.prefix}-template-sync" >&2
-            exit 1 ;;
-          IN_PROGRESS) ;;
-          *) echo "ERROR: could not read the status of build $BUILD_ID (got '$STATUS')." >&2; exit 1 ;;
-        esac
-        ATTEMPTS=$((ATTEMPTS + 1))
-        if [ "$ATTEMPTS" -ge 80 ]; then
-          echo "ERROR: build $BUILD_ID is still $STATUS after 20 minutes; giving up." >&2
+          --query 'build.id' --output text)
+        if [ -z "$BUILD_ID" ] || [ "$BUILD_ID" = "None" ]; then
+          echo "ERROR: could not start the template sync. Check that the AWS CLI is on PATH and that these credentials have codebuild:StartBuild on ${aws_codebuild_project.template_sync.name}." >&2
           exit 1
         fi
-        echo "Status: $STATUS — waiting..."; sleep 15
+        echo "Template sync started: $BUILD_ID"
+        echo "Waiting for build to complete..."
+        ATTEMPTS=0
+        while true; do
+          STATUS=$(aws codebuild batch-get-builds --ids "$BUILD_ID" \
+            --region ${data.aws_region.current.id} \
+            --query 'builds[0].buildStatus' --output text || echo "")
+          case "$STATUS" in
+            SUCCEEDED) echo "Template sync completed"; break ;;
+            FAILED|FAULT|TIMED_OUT|STOPPED)
+              # A build that failed in QUEUED never ran: CodeBuild could not use
+              # its service role yet, as a role or policy created moments ago
+              # can take a minute to apply. Starting it again is safe.
+              NEVER_RAN=$(aws codebuild batch-get-builds --ids "$BUILD_ID" \
+                --region ${data.aws_region.current.id} \
+                --query "length(builds[0].phases[?phaseType=='QUEUED' && (phaseStatus=='CLIENT_ERROR' || contexts[?statusCode=='CLIENT_ERROR'])])" \
+                --output text || echo 0)
+              if [ "$STATUS" = "FAILED" ] && [ "$NEVER_RAN" = "1" ] && [ "$STARTS" -lt 6 ]; then
+                echo "Build $BUILD_ID could not start (CLIENT_ERROR while queued, usually IAM permissions not yet applied); starting it again in $((STARTS * 20)) s" >&2
+                sleep $((STARTS * 20)); STARTS=$((STARTS + 1)); continue 2
+              fi
+              echo "Template sync failed: $STATUS. Logs: /aws/codebuild/${local.prefix}-template-sync" >&2
+              exit 1 ;;
+            IN_PROGRESS) ;;
+            *) echo "ERROR: could not read the status of build $BUILD_ID (got '$STATUS')." >&2; exit 1 ;;
+          esac
+          ATTEMPTS=$((ATTEMPTS + 1))
+          if [ "$ATTEMPTS" -ge 80 ]; then
+            echo "ERROR: build $BUILD_ID is still $STATUS after 20 minutes; giving up." >&2
+            exit 1
+          fi
+          echo "Status: $STATUS — waiting..."; sleep 15
+        done
+        break
       done
     EOT
   }

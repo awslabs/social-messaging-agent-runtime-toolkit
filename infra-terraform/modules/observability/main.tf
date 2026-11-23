@@ -36,6 +36,9 @@ locals {
   # The endpoint the stack invokes: the webhook and the scheduler call
   # InvokeAgentRuntime without a qualifier.
   runtime_endpoint = "DEFAULT"
+  # The runtime logs here. AgentCore creates the group, not Terraform, and
+  # module.monitoring keeps and masks it.
+  runtime_log_group = "/aws/bedrock-agentcore/runtimes/${var.runtime_id}-${local.runtime_endpoint}"
   # The dimension set AgentCore publishes the runtime's invocation metrics with,
   # in AWS/Bedrock-AgentCore. An alarm matches a metric only by its exact set.
   runtime_metric_dimensions = {
@@ -169,7 +172,7 @@ resource "aws_cloudwatch_dashboard" "agent" {
       {
         type = "log"
         properties = {
-          query  = "SOURCE '/aws/bedrock-agentcore/runtimes/${var.runtime_id}-${local.runtime_endpoint}' | fields @timestamp, @message | filter @message like /ERROR/ | sort @timestamp desc | limit 20"
+          query  = "SOURCE '${local.runtime_log_group}' | fields @timestamp, @message | filter @message like /ERROR/ | sort @timestamp desc | limit 20"
           region = var.region
           title  = "Recent Errors"
         }
@@ -179,3 +182,7 @@ resource "aws_cloudwatch_dashboard" "agent" {
 }
 
 output "dashboard_name" { value = aws_cloudwatch_dashboard.agent.dashboard_name }
+output "runtime_log_group" {
+  description = "The agent runtime's log group, which AgentCore creates."
+  value       = local.runtime_log_group
+}
