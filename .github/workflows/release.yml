@@ -43,8 +43,13 @@ jobs:
       # it: a v2026.11.0 release built from a tree that says 2026.10.0 would
       # upload the wrong version under the right tag. VERSION has no pre-release
       # form, so a GitHub pre-release would reach PyPI as a final release, and a
-      # tag off main would publish a tree nobody merged.
-      - name: Tag matches VERSION, is on main, and is not a pre-release
+      # tag off a protected branch would publish a tree nobody merged. A patch
+      # release is tagged on its line's release branch (release/2026.11 for
+      # v2026.11.1), which has main's protection; the branch is the one VERSION
+      # names, so a fix for one line cannot ship under another. A release runs
+      # the release.yml in the tagged commit, so a release branch cut from its
+      # .0 tag gets this check only once its first backport brings this file.
+      - name: Tag matches VERSION, is on main or its release branch, and is not a pre-release
         env:
           TAG: ${{ github.event.release.tag_name }}
           PRERELEASE: ${{ github.event.release.prerelease }}
@@ -58,9 +63,17 @@ jobs:
             echo "::error::$TAG is a GitHub pre-release; VERSION has no pre-release form, so PyPI would get a final release"
             exit 1
           fi
-          git fetch --no-tags origin main
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
-            echo "::error::release tag $TAG points at $GITHUB_SHA, which is not on main"
+          branch="release/${version%.*}"
+          # Full refs: a short name resolves a tag before a branch, so a tag
+          # named main or release/<line> would otherwise stand in for the branch.
+          git fetch --no-tags origin refs/heads/main
+          if git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
+            echo "$TAG is on main"
+          elif git fetch --no-tags origin "refs/heads/$branch" \
+            && git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
+            echo "$TAG is on $branch"
+          else
+            echo "::error::release tag $TAG points at $GITHUB_SHA, which is on neither main nor $branch"
             exit 1
           fi
       # The wheel must work from a pip install, not just a checkout: the same

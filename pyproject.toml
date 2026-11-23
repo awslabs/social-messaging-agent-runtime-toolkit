@@ -131,6 +131,9 @@ dev = [
 ]
 
 [tool.ruff.lint]
+# Named here rather than left to ruff's default rule set, which a ruff minor
+# release can widen: a ruff bump then changes no rules unless this list does.
+select = ["E4", "E7", "E9", "F"]
 # projects/ handler files intentionally set up logging before imports (Lambda cold-start fix)
 # projects/ agent.py files have a comment block between imports by design
 per-file-ignores = { "projects/**/*.py" = ["E402"], "blueprints/**/*.py" = ["E402"] }

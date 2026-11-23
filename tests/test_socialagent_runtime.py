@@ -466,6 +466,8 @@ async def test_scheduler_schedule_calls_eventbridge(
     object.__setattr__(
         scheduler_mod.config, "scheduler_role_arn", "arn:aws:iam:::role/scheduler"
     )
+    # The cap's count lists schedules through AWS and fails closed without it.
+    monkeypatch.setattr(scheduler_mod, "_count_user_schedules", lambda phone: 0)
     try:
         with patch.object(scheduler_mod, "_create_schedule") as mock_create:
             sid = await scheduler_mod.schedule(

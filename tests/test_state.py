@@ -159,7 +159,9 @@ async def test_claim_once_is_one_conditional_write(mock_table):
     assert await state.claim_once("+521234567890", "evt-1", ttl_minutes=10) is True
     mock_table.get_item.assert_not_called()
     kwargs = mock_table.put_item.call_args.kwargs
-    assert kwargs["ConditionExpression"] == "attribute_not_exists(sk)"
+    assert kwargs["ConditionExpression"] == "attribute_not_exists(sk) OR #ttl < :now"
+    assert kwargs["ExpressionAttributeNames"] == {"#ttl": "ttl"}
+    assert int(time.time()) - 5 <= kwargs["ExpressionAttributeValues"][":now"]
     item = kwargs["Item"]
     assert (item["pk"], item["sk"]) == ("+521234567890", "claim#evt-1")
     assert item["ttl"] >= int(time.time()) + 9 * 60

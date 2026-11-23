@@ -428,7 +428,11 @@ def _schedule_exists(name: str) -> bool:
 
 
 def _count_user_schedules(phone: str) -> int:
-    """Count active schedules belonging to a specific phone number."""
+    """Count active schedules belonging to a specific phone number.
+
+    Raises :class:`ScheduleLimitExceeded` when the schedules cannot be listed:
+    the cap fails closed, so an API error cannot let a user past it.
+    """
     client = _scheduler_client()
     prefix = config.scheduler_prefix
     count = 0
@@ -447,8 +451,12 @@ def _count_user_schedules(phone: str) -> int:
             next_token = resp.get("NextToken")
             if not next_token:
                 break
-    except Exception:
-        logger.warning("_count_user_schedules: failed to count, allowing creation")
+    except Exception as exc:
+        logger.warning("_count_user_schedules: failed to count, refusing creation")
+        raise ScheduleLimitExceeded(
+            "Could not check the schedule limit, so no schedule was created. "
+            "Try again shortly."
+        ) from exc
     return count
 
 
@@ -514,7 +522,8 @@ def _create_within_cap(
     """Check the per-user cap and create the schedule as one step.
 
     Raises :class:`ScheduleLimitExceeded` when ``phone`` holds
-    ``_MAX_SCHEDULES`` schedules and ``name`` is not one of them.
+    ``_MAX_SCHEDULES`` schedules and ``name`` is not one of them, or when the
+    user's schedules cannot be counted.
     """
     with _CAP_LOCK:
         if _count_user_schedules(phone) >= _MAX_SCHEDULES and not _schedule_exists(
@@ -596,6 +605,10 @@ async def schedule(
             (``SCHEDULER_LAMBDA_ARN`` is empty) and ``operation`` is not one of
             the notification Lambda's sends (``send_message``,
             ``send_template``, ``send_text``). Nothing is created.
+        ScheduleLimitExceeded: Outside dev mode, the user already holds
+            ``SOCIALAGENT_MAX_SCHEDULES_PER_USER`` schedules and this would be
+            a new one, or their schedules could not be listed to count them.
+            Nothing is created.
     """
     _validate_operation(operation)
     # In dev mode too, where `socialagent dev` sets SCHEDULER_LAMBDA_ARN from

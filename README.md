@@ -16,6 +16,8 @@
 
 SMART turns **any** AI agent into a WhatsApp assistant on AWS. It owns the entire channel layer — webhook ingestion, message parsing, media, conversation memory, scheduling, external triggers, and template sync — and pairs it with a CLI, one-command infrastructure, and an admin console. Your team builds, ships, and operates conversation logic instead of rebuilding plumbing.
 
+📝 **Launch post:** [Build WhatsApp AI agents with Amazon Bedrock AgentCore](https://aws.amazon.com/blogs/machine-learning/build-whatsapp-ai-agents-with-amazon-bedrock-agentcore/) on the AWS blog.
+
 > **Anonymous deployment counter.** Each deployment creates one small CloudFormation stack, `<env>-<project>-deployment-metrics`, holding a single SSM parameter with an anonymous tracking code, so AWS can count deployments of this solution. No usage, message or customer data. To turn off the marker stack and its parameter, add this under your existing `terraform:` block in `socialagent.<env>.yaml` before the first deploy (the `TrackingId` tag stays; see below):
 >
 > ```yaml

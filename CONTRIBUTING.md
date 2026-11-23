@@ -44,9 +44,21 @@ Pull requests from outside contributors are reviewed by the project maintainers,
 
 ## What to expect from the maintainers
 
-Issues and pull requests are triaged within five business days: labelled, and either answered, assigned, or closed with the reason. Beyond that, response time is best effort. A pull request that passes the checks and has an approving review from a code owner is merged by a maintainer (one from an outside contributor also gets the second review described in [Reviewing a pull request](#reviewing-a-pull-request-maintainers)); one that goes a month without a response from its author after a review is closed, and can be reopened. There is no stale bot; a maintainer closes it and says why.
+Issues and pull requests are triaged within five business days: labelled, and either answered, assigned, or closed with the reason. Beyond that, response time is best effort. A pull request that passes the checks and has an approving review from a maintainer other than its author is merged by a maintainer (one from an outside contributor also gets the second review described in [Reviewing a pull request](#reviewing-a-pull-request-maintainers)); one that goes a month without a response from its author after a review is closed, and can be reopened. There is no stale bot; a maintainer closes it and says why.
 
-Reviews route automatically: `.github/CODEOWNERS` names the four maintainers, by GitHub login, for every part of the tree, and the branch protection on `main` requires one of them to approve. The Labels workflow ([.github/workflows/labels.yml](.github/workflows/labels.yml)) labels each pull request `docs-only`, `infra`, `runtime`, `console` or `ci` from the files it changes, as [.github/labeler.yml](.github/labeler.yml) maps them, so the kind of review is visible before it starts; a new top-level directory, or a top-level file other than Markdown, needs a line there, or `tests/test_pr_labels.py` fails.
+Reviews route automatically by area: `.github/CODEOWNERS` gives each part of the tree one owner among the four maintainers, by GitHub login (agent and runtime, admin console, infrastructure as code, CLI and Lambda control layer, and security, which covers `.github/`, `SECURITY.md`, the threat model, the data flows and every Terraform file that defines an IAM role or policy), and names all four for everything else, such as docs, ADRs, tests and scripts. Owners are for routing: the branch protection on `main` requires one approval from a maintainer other than the author, not from a code owner, so an owner who is away never blocks an area. The Labels workflow ([.github/workflows/labels.yml](.github/workflows/labels.yml)) labels each pull request `docs-only`, `infra`, `runtime`, `console` or `ci` from the files it changes, as [.github/labeler.yml](.github/labeler.yml) maps them, so the kind of review is visible before it starts; a new top-level directory, or a top-level file other than Markdown, needs a line there, or `tests/test_pr_labels.py` fails.
+
+### Who reviews a pull request
+
+- **One approval** from a maintainer other than the author, for every pull request.
+- **A second maintainer's review** as well, for:
+  - a pull request by an area's owner that changes their own area;
+  - a pull request from a fork ([Reviewing a pull request](#reviewing-a-pull-request-maintainers), step 5);
+  - a change to a security path, the lines at the end of `.github/CODEOWNERS`;
+  - a change to a contract: the payload between the Lambdas and the agent (`SOCIALAGENT_VERSION`), or the CLI's public commands and options.
+- **While an owner is away**, the maintainers agree who covers the area for that period; `.github/CODEOWNERS` does not change.
+
+GitHub cannot require two approvals for some paths only, so the second review is the maintainers' rule rather than a branch protection setting.
 
 ## Contributions written with AI assistance
 
@@ -190,7 +202,7 @@ Maintainers only. A release is published on PyPI as `smart-socialagent` by [.git
 
 1. In a pull request, set `VERSION` to the new release (`YYYY.MM.patch`) and the same number in the README's version badge and in `solution_version` in `infra-terraform/locals.tf` (`tests/test_release_files.py` checks both). Move the `[Unreleased]` entries of `CHANGELOG.md` under a heading for it and update the compare links at the end of the file. Merge it.
 2. Tag the merge commit `v<VERSION>` and publish a GitHub Release from that tag.
-3. The Release workflow checks that the tag matches `VERSION`, is on `main` and is not a pre-release, runs the packaging tests and `twine check --strict` in a job of their own, and builds the wheel and sdist in a job that does nothing else. The publish job then waits in the `pypi` environment until a required reviewer approves it, and uploads.
+3. The Release workflow checks that the tag matches `VERSION`, is on `main` (or, for a patch release, on its line's release branch, `release/2026.11` for `v2026.11.1`, which has the same protection as `main`) and is not a pre-release, runs the packaging tests and `twine check --strict` in a job of their own, and builds the wheel and sdist in a job that does nothing else. The publish job then waits in the `pypi` environment until a required reviewer approves it, and uploads. A release runs the `release.yml` in its tagged commit, so a release branch is cut from its `.0` tag (never from `main`, which would bring unreleased features) and its first backport pull request brings over the current `release.yml`, again whenever that file changes on `main`; until then the branch's own copy refuses its patch tags.
 4. Check the release page on PyPI. PyPI never accepts the same version twice, even after a release is deleted, so a mistake is fixed with a new patch release.
 
 One-time setup, before the first release through the workflow: on PyPI, the project's Publishing settings name this repository, `release.yml` and the `pypi` environment as a trusted publisher; in the repository settings, the `pypi` environment has required reviewers, with "Prevent self-review" on and administrator bypass off, and accepts deployments only from `v*` tags, and a tag ruleset limits who can create, move or delete `v*` tags.

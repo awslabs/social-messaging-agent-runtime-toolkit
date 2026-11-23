@@ -339,10 +339,17 @@ class FakeStateTable:
     def __init__(self) -> None:
         self.items: dict[tuple[str, str], dict] = {}
 
-    def put_item(self, Item: dict, ConditionExpression: str) -> None:  # noqa: N803
-        assert ConditionExpression == "attribute_not_exists(sk)"
+    def put_item(  # noqa: N803
+        self,
+        Item: dict,
+        ConditionExpression: str,
+        ExpressionAttributeNames: dict,
+        ExpressionAttributeValues: dict,
+    ) -> None:
+        assert ConditionExpression == "attribute_not_exists(sk) OR #ttl < :now"
         key = (Item["pk"], Item["sk"])
-        if key in self.items:
+        held = self.items.get(key)
+        if held is not None and held["ttl"] >= ExpressionAttributeValues[":now"]:
             raise ClientError(
                 {"Error": {"Code": "ConditionalCheckFailedException"}}, "PutItem"
             )

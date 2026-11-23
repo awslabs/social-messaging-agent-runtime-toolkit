@@ -12,6 +12,11 @@ from socialagent.types import (
     ContactContent,
     ReactionContent,
 )
+from socialagent.utils.phone import install_log_masking
+
+# An exception's text or traceback can quote a user's number; a record factory
+# masks it before any handler sees the record, whoever installs the handlers.
+install_log_masking()
 
 __all__ = [
     "SocialAgentApp",

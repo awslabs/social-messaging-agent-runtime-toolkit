@@ -59,7 +59,7 @@ await state.delete(phone, key)
 - `phone` — E.164 phone number (partition key)
 - `key` — arbitrary string (sort key)
 - `data` — any JSON-serializable value
-- `ttl_minutes` — time-to-live, counted from this write; reading the item does not extend it, writing it again does. DynamoDB deletes expired items in the background, usually within a few days, and until it does `get` still returns them
+- `ttl_minutes` — time-to-live, counted from this write; reading the item does not extend it, writing it again does. DynamoDB deletes expired items in the background, usually within a few days. Until it does, the item is still in the table, but `get` returns `None` for it, and `claim_once` and `compare_and_set` treat it as absent
 
 `get`/`put`/`delete` are available both from `EventContext.state` (Lambda
 handlers) and from `socialagent_runtime.state` (agent-side). The functions below are
@@ -72,6 +72,7 @@ invocations, at-least-once delivery, idempotency).
 
 Returns every key stored for a phone. Paginates internally, so it's safe to
 call even if a user has accumulated more state than fits in one DynamoDB page.
+Like `get`, it skips a key whose `ttl` has passed, even if DynamoDB has not deleted it yet. To remove a namespace, expired items included, use `delete_prefix`.
 
 ```python
 keys = await state.list_keys(phone)
@@ -84,7 +85,7 @@ DynamoDB's `ADD` update expression — genuinely atomic even when multiple
 Lambda invocations increment the same counter in the same millisecond. Stored
 under a separate `counter#{name}` namespace so it never collides with a
 regular `put`/`get` key of the same name. The first call for a given
-`(phone, name)` returns `1`; later calls return `2, 3, ...`.
+`(phone, name)` returns `1`; later calls return `2, 3, ...`. Each call sets the counter's `ttl` again, and an expired counter that DynamoDB has not deleted yet keeps counting from its old value.
 
 Use this instead of `value = await state.get(...); await state.put(..., value + 1)`
 whenever more than one invocation might increment the same counter concurrently
@@ -102,7 +103,8 @@ caller for a given `(phone, name)`; every later caller (including a retried
 or duplicate-delivered event) gets `False`. Implemented as a conditional
 `put_item` (`attribute_not_exists`), so the decision is made in a single
 atomic write — a naive read-then-write would let two concurrent callers both
-see "not claimed" and both proceed.
+see "not claimed" and both proceed. A marker whose `ttl` has passed counts as
+absent, even if DynamoDB has not deleted it yet, so it does not refuse a new claim.
 
 Use this for inbound-event idempotency: WhatsApp/SNS delivery is
 at-least-once, so the same message can be processed more than once (retry, or
@@ -151,7 +153,9 @@ stores no `data` attribute (an `atomic_increment` counter, for instance). Treat
 `factory()`'s result without having stored it.
 
 `expected=None` means "only set if the key is absent" — the common case for
-minting an ID exactly once:
+minting an ID exactly once. An item whose `ttl` has passed counts as absent, even
+if DynamoDB has not deleted it yet: it does not block `expected=None`, and its
+old value never matches `expected`:
 
 ```python
 operation_id = await state.compare_and_set(
@@ -178,7 +182,9 @@ and failing in prod (or vice versa).
 Deletes every stored item whose key starts with `prefix` for that phone.
 Returns the number of items deleted. Useful for cleaning up an append-only
 namespace in bulk (e.g. every `photo#{operation_id}#*` item once a flow
-completes) instead of tracking and deleting keys one at a time.
+completes) instead of tracking and deleting keys one at a time. Unlike
+`list_keys` and `list_items`, it also deletes items whose `ttl` has passed but
+that DynamoDB has not deleted yet, and counts them in the result.
 
 ```python
 deleted = await state.delete_prefix(phone, f"photo#{operation_id}#")
@@ -190,7 +196,8 @@ Returns the deserialized value of every stored item whose key starts with
 `prefix`, in one DynamoDB query — use this instead of `list_keys` + N
 individual `get` calls when you need the actual data for a whole namespace,
 not just the key names. Only items whose value is a JSON object (`dict`) are
-returned.
+returned. Like `get`, it skips an item whose `ttl` has passed, even if DynamoDB
+has not deleted it yet.
 
 ```python
 photos = await state.list_items(phone, f"photo#{operation_id}#")
