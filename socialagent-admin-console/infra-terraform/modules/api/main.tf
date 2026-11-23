@@ -424,9 +424,9 @@ resource "aws_iam_role_policy" "backend" {
         Resource = "arn:aws:bedrock-agentcore:*:*:runtime/*"
       },
       {
-        Sid      = "BedrockModelLifecycle"
-        Effect   = "Allow"
-        Action   = ["bedrock:GetFoundationModel", "bedrock:GetInferenceProfile"]
+        Sid    = "BedrockModelLifecycle"
+        Effect = "Allow"
+        Action = ["bedrock:GetFoundationModel", "bedrock:GetInferenceProfile"]
         Resource = [
           "arn:aws:bedrock:*::foundation-model/*",
           "arn:aws:bedrock:*:*:inference-profile/*",
