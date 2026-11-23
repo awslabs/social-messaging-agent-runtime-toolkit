@@ -18,13 +18,16 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "labels.yml"
 LABELER = ROOT / ".github" / "labeler.yml"
 
-# The v7.0.0 commit. A Dependabot bump changes this line too, in front of a
-# reviewer, since nothing in CI checks that a SHA is a labeler release.
+# The v7.0.0 commit. A Dependabot bump of the labeler fails this test until a
+# maintainer copies its SHA here, since nothing in CI checks that a SHA is a
+# labeler release, and the port below is rechecked against the new release.
 LABELER_ACTION = "actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13"
 
 # The labeler's documented options. It ignores an unknown key beside
 # changed-files with only a log line, so a typo would drop a rule silently.
-MATCH_KEYS = {"changed-files", "all", "any"}
+# A top-level ``any:`` is left out: the labeler merges plain changed-files
+# entries into it, which the port below does not model.
+MATCH_KEYS = {"changed-files", "all"}
 CHANGED_FILES_KEYS = {
     "any-glob-to-any-file",
     "any-glob-to-all-files",
@@ -164,7 +167,7 @@ def _labels(files: list[str]) -> set[str]:
     [
         (["README.md", "docs/media.md"], {"docs-only"}),
         (["docs/assets/architecture.png", "AGENTS.md"], {"ci"}),
-        (["infra-terraform/README.md"], {"docs-only"}),
+        (["infra-terraform/README.md"], {"infra"}),
         (["infra-terraform/main.tf", "infra-terraform/README.md"], {"infra"}),
         (["socialagent-admin-console/README.md"], {"docs-only"}),
         (["socialagent-admin-console/AGENTS.md"], {"console"}),
@@ -195,3 +198,27 @@ def test_each_tracked_file_alone_gets_one_label():
     wrong = {path: sorted(_labels([path])) for path in tracked}
     wrong = {path: labels for path, labels in wrong.items() if len(labels) != 1}
     assert wrong == {}, "fix these in .github/labeler.yml"
+
+
+def test_no_code_or_configuration_is_docs_only():
+    """docs-only reads as a light review, so nothing a program reads may get it."""
+    tracked = subprocess.run(
+        ["git", "ls-files"], cwd=ROOT, capture_output=True, check=True, text=True
+    ).stdout.splitlines()
+    code = (
+        ".py",
+        ".tf",
+        ".ts",
+        ".tsx",
+        ".js",
+        ".sh",
+        ".yml",
+        ".yaml",
+        ".json",
+        ".toml",
+        ".hcl",
+    )
+    light = sorted(
+        p for p in tracked if p.endswith(code) and "docs-only" in _labels([p])
+    )
+    assert light == [], "these must not be docs-only"

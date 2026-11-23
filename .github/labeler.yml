@@ -7,14 +7,18 @@
 # included. tests/test_pr_labels.py fails when a tracked file, changed alone,
 # gets no label or more than one, and pins the boundary cases below.
 #
-# A label sets how closely a reviewer looks, so docs-only is only for files
-# that nothing ships, runs or relies on: Markdown, LICENSE, NOTICE and anything
-# under docs/ (today its diagrams and images). The other labels match a file
-# only when it is not Markdown (all-globs-to-any-file with "!**/*.md": one file
-# must match both), so a pull request that changes only infra-terraform/README.md
-# is docs-only, not infra. The exceptions are the Markdown that instructs an
-# agent, ships, or carries the security posture, listed in both places below
-# so that each lands on exactly one label:
+# A label sets how closely a reviewer looks, so docs-only is only for
+# documentation that no code reads and no project receives: Markdown outside
+# the trees below, anything under docs/ (today also its diagrams and images),
+# and LICENSE and NOTICE, which the wheel carries only as licence files. The
+# other labels match a file only when it is not Markdown (all-globs-to-any-file
+# with "!**/*.md": one file must match both), so a pull request that changes
+# only socialagent-admin-console/README.md is docs-only, not console. The
+# exceptions are whole trees that ship, and the Markdown that instructs an
+# agent or carries the security posture, listed in both places below so that
+# each lands on exactly one label:
+#   - infra: everything under infra-terraform/, which ships in the wheel and
+#     which the CLI copies into a project when it has no checkout.
 #   - runtime: everything under blueprints/ and recipes/, which ship in the
 #     wheel and which `socialagent init` and `socialagent recipe add` copy into
 #     projects (READMEs, skills and agent instructions included), and PYPI.md,
@@ -37,14 +41,14 @@ docs-only:
           # is still docs-only.
           - any-glob-to-all-files: "{docs/**,**/*.md,LICENSE,NOTICE}"
           - all-globs-to-all-files:
-              - "!{blueprints,recipes,.github}/**"
+              - "!{blueprints,recipes,infra-terraform,.github}/**"
               - "!**/{AGENTS,CLAUDE}.md"
               - "!PYPI.md"
               - "!{SECURITY.md,docs/threat-model.*,docs/data-flows.md}"
 
 infra:
   - changed-files:
-      - all-globs-to-any-file: ["infra-terraform/**", "!**/*.md"]
+      - any-glob-to-any-file: "infra-terraform/**"
 
 # The CLI, the runtime package, the blueprints and recipes a project copies,
 # their tests, and what pins their dependencies and version.
