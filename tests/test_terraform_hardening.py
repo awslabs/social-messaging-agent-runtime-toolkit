@@ -3592,6 +3592,100 @@ def test_agent_build_wait_fails_the_apply_unless_the_build_succeeds(
     assert result.returncode == exit_code, result.stdout + result.stderr
 
 
+_BUILD_SCRIPTS = {
+    "build_layer": INFRA / "packaging.tf",
+    "trigger_build": CODEBUILD_TF,
+    "build_zip_package": CODEBUILD_TF,
+    "trigger_template_sync": INFRA / "modules" / "templates" / "main.tf",
+}
+
+
+def _run_build_script(tmp_path: Path, resource: str, builds: list[tuple[str, str]]):
+    """Run a build provisioner against a stand-in ``aws`` and a no-op ``sleep``.
+
+    *builds* gives, per ``start-build``, the build's final status and what the
+    never-ran query answers for it (``"1"`` when it failed in ``QUEUED`` with
+    ``CLIENT_ERROR``, ``"0"`` otherwise). Returns the result and the number of builds started.
+    """
+    header = f'resource "null_resource" "{resource}"'
+    script = _heredoc(_code(_BUILD_SCRIPTS[resource].read_text()), header, "command")
+    # Innermost first: the layer script's S3 key nests one interpolation in another.
+    while (done := re.sub(r"\$\{[^{}]*\}", "placeholder", script)) != script:
+        script = done
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    state = tmp_path / "starts"
+    state.write_text("0")
+    table = "\n".join(f"  {i}) S={st}; Q={q} ;;" for i, (st, q) in enumerate(builds, 1))
+    aws = bin_dir / "aws"
+    aws.write_text(
+        "#!/bin/sh\n"
+        f'n=$(cat "{state}")\n'
+        'case "$2" in\n'
+        f'  start-build) n=$((n + 1)); echo "$n" > "{state}"; echo "build-$n"; exit 0 ;;\n'
+        "  cp) exit 0 ;;\n"
+        "  batch-get-builds) ;;\n"
+        "  *) exit 2 ;;\n"
+        "esac\n"
+        'case "$n" in\n'
+        f"{table}\n"
+        "  *) exit 2 ;;\n"
+        "esac\n"
+        'case "$*" in *phases*) echo "$Q" ;; *) echo "$S" ;; esac\n'
+    )
+    aws.chmod(0o755)
+    sleep = bin_dir / "sleep"
+    sleep.write_text("#!/bin/sh\nexit 0\n")
+    sleep.chmod(0o755)
+    result = subprocess.run(
+        ["/bin/sh", "-c", script],
+        env={"PATH": f"{bin_dir}:/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    return result, int(state.read_text())
+
+
+@pytest.mark.parametrize("resource", sorted(_BUILD_SCRIPTS))
+def test_a_build_that_could_not_start_is_started_again(tmp_path: Path, resource: str):
+    """On a first deploy CodeBuild can try a build before its new service role's
+    policy applies, and fails it in QUEUED with CLIENT_ERROR, having run nothing
+    (#211). The script starts it again instead of failing the apply."""
+    result, starts = _run_build_script(
+        tmp_path,
+        resource,
+        [
+            ("FAILED", "1"),
+            ("FAILED", "1"),
+            ("SUCCEEDED", "0"),
+        ],
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert starts == 3
+    assert "could not start (CLIENT_ERROR while queued" in result.stderr
+
+
+@pytest.mark.parametrize("resource", sorted(_BUILD_SCRIPTS))
+def test_a_build_that_ran_and_failed_is_not_started_again(
+    tmp_path: Path, resource: str
+):
+    """A build that got past QUEUED and failed is a real failure: one start, exit 1."""
+    result, starts = _run_build_script(tmp_path, resource, [("FAILED", "0")])
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert starts == 1
+
+
+@pytest.mark.parametrize("resource", sorted(_BUILD_SCRIPTS))
+def test_a_build_that_never_starts_gives_up_after_six_tries(
+    tmp_path: Path, resource: str
+):
+    """A role that is wrong, not just new, still fails the apply, after six starts."""
+    result, starts = _run_build_script(tmp_path, resource, [("FAILED", "1")] * 7)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert starts == 6
+
+
 # =============================================================================
 # The admin console reads API keys and usage plans, nothing else in API Gateway
 # =============================================================================
