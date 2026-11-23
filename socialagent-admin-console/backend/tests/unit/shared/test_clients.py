@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """Unit tests for shared.clients — cached boto3 client factory."""
+from botocore.config import Config
+
 from shared.clients import client, clear_client_cache
 
 
@@ -35,6 +37,16 @@ def test_client_has_adaptive_retry_config():
     # See botocore/config.py: Config._merge_retries.
     assert retry_config["mode"] == "adaptive"
     assert retry_config["total_max_attempts"] == 6
+
+
+def test_custom_config_uses_a_separate_cached_client():
+    config = Config(connect_timeout=1, read_timeout=2, retries={"total_max_attempts": 1})
+    short = client("s3", "us-east-1", config)
+    assert short is client("s3", "us-east-1", config)
+    assert short is not client("s3", "us-east-1")
+    assert short.meta.config.connect_timeout == 1
+    assert short.meta.config.read_timeout == 2
+    assert short.meta.config.retries["total_max_attempts"] == 1
 
 
 def test_clear_cache_forces_new_instance():

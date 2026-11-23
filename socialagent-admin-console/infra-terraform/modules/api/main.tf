@@ -429,8 +429,8 @@ resource "aws_iam_role_policy" "backend" {
         Action = ["bedrock:GetFoundationModel", "bedrock:GetInferenceProfile"]
         Resource = [
           "arn:aws:bedrock:*::foundation-model/*",
-          "arn:aws:bedrock:*:*:inference-profile/*",
-          "arn:aws:bedrock:*:*:application-inference-profile/*",
+          "arn:aws:bedrock:*:${data.aws_caller_identity.current.account_id}:inference-profile/*",
+          "arn:aws:bedrock:*:${data.aws_caller_identity.current.account_id}:application-inference-profile/*",
         ]
       },
       {
