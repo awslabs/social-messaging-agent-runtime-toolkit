@@ -11,11 +11,16 @@ import re
 import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "labels.yml"
 LABELER = ROOT / ".github" / "labeler.yml"
+
+# The v7.0.0 commit. A Dependabot bump changes this line too, in front of a
+# reviewer, since nothing in CI checks that a SHA is a labeler release.
+LABELER_ACTION = "actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13"
 
 # The labeler's documented options. It ignores an unknown key beside
 # changed-files with only a log line, so a typo would drop a rule silently.
@@ -34,8 +39,6 @@ def _labeler() -> dict:
 
 def test_workflow_is_one_pinned_labeler_step_and_nothing_else():
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-    uses = workflow["jobs"]["label"]["steps"][0]["uses"]
-    assert re.fullmatch(r"actions/labeler@[0-9a-f]{40}", uses), uses
     # PyYAML reads the bare key ``on`` as True.
     assert workflow == {
         "name": "Labels",
@@ -51,7 +54,7 @@ def test_workflow_is_one_pinned_labeler_step_and_nothing_else():
                 "runs-on": "ubuntu-latest",
                 "timeout-minutes": 5,
                 "permissions": {"contents": "read", "pull-requests": "write"},
-                "steps": [{"uses": uses, "with": {"sync-labels": True}}],
+                "steps": [{"uses": LABELER_ACTION, "with": {"sync-labels": True}}],
             }
         },
     }
@@ -85,20 +88,110 @@ def test_labeler_uses_only_options_it_reads():
     assert [list(entry) for entry in labeler["docs-only"]] == [["all"]]
 
 
-def test_every_top_level_path_has_a_label():
-    """A directory or file labeler.yml does not name leaves a pull request that changes only it unlabelled."""
+# A port of labeler v7.0.0's matching (get-label-configs.ts, labeler.ts and
+# changedFiles.ts at the pinned commit) for the minimatch syntax labeler.yml
+# uses: braces, "**", "*" and a leading "!", with dotfiles matched.
+CHECKS = {
+    "any-glob-to-any-file": lambda globs, files: any(
+        _match(g, f) for g in globs for f in files
+    ),
+    "any-glob-to-all-files": lambda globs, files: any(
+        all(_match(g, f) for f in files) for g in globs
+    ),
+    "all-globs-to-any-file": lambda globs, files: any(
+        all(_match(g, f) for g in globs) for f in files
+    ),
+    "all-globs-to-all-files": lambda globs, files: all(
+        _match(g, f) for g in globs for f in files
+    ),
+}
+GLOB_TOKENS = {"**/": "(?:[^/]*/)*", "/**": "(?:/.*)?", "**": ".*", "*": "[^/]*"}
+
+
+def _expand(glob: str) -> list[str]:
+    brace = re.search(r"\{([^{}]*)\}", glob)
+    if not brace:
+        return [glob]
+    head, tail = glob[: brace.start()], glob[brace.end() :]
+    return [g for alt in brace.group(1).split(",") for g in _expand(head + alt + tail)]
+
+
+def _match(glob: str, path: str) -> bool:
+    negated = glob.startswith("!")
+    for pattern in _expand(glob.lstrip("!")):
+        tokens = re.split(r"(\*\*/|/\*\*$|\*\*|\*)", pattern)
+        if re.fullmatch(
+            "".join(GLOB_TOKENS.get(t) or re.escape(t) for t in tokens), path
+        ):
+            return not negated
+    return negated
+
+
+def _holds(options: list, files: list[str], every: bool) -> bool:
+    results = (
+        CHECKS[key]([globs] if isinstance(globs, str) else globs, files)
+        for option in options
+        for key, globs in option.items()
+    )
+    return all(results) if every else any(results)
+
+
+def _labels(files: list[str]) -> set[str]:
+    """The labels the labeler sets on a pull request that changes these files."""
+    labels = set()
+    for label, entries in _labeler().items():
+        configs, merged = [], []
+        for entry in entries:
+            for key, value in entry.items():
+                if key == "changed-files":
+                    merged.append(value)
+                else:
+                    configs.append(
+                        (key == "all", [group["changed-files"] for group in value])
+                    )
+        if merged:
+            configs.append((False, merged))
+        if all(
+            (all if every else any)(_holds(group, files, every) for group in groups)
+            for every, groups in configs
+        ):
+            labels.add(label)
+    return labels
+
+
+@pytest.mark.parametrize(
+    "files, labels",
+    [
+        (["README.md", "docs/media.md"], {"docs-only"}),
+        (["docs/assets/architecture.png", "AGENTS.md"], {"ci"}),
+        (["infra-terraform/README.md"], {"docs-only"}),
+        (["infra-terraform/main.tf", "infra-terraform/README.md"], {"infra"}),
+        (["socialagent-admin-console/README.md"], {"docs-only"}),
+        (["socialagent-admin-console/AGENTS.md"], {"console"}),
+        (["blueprints/minimal/README.md"], {"runtime"}),
+        (["blueprints/minimal/handlers/shared/README.md"], {"runtime"}),
+        (["recipes/voice-reply/README.md"], {"runtime"}),
+        (["recipes/voice-reply/skill.md"], {"runtime"}),
+        (["PYPI.md"], {"runtime"}),
+        (["AGENTS.md"], {"ci"}),
+        (["CLAUDE.md"], {"ci"}),
+        (["SECURITY.md"], {"ci"}),
+        (["docs/threat-model.md"], {"ci"}),
+        (["docs/threat-model.json"], {"ci"}),
+        (["docs/data-flows.md"], {"ci"}),
+        ([".github/PULL_REQUEST_TEMPLATE.md"], {"ci"}),
+        ([".github/workflows/ci.yml", "uv.lock"], {"ci", "runtime"}),
+    ],
+)
+def test_boundary_paths_get_their_labels(files, labels):
+    assert _labels(files) == labels
+
+
+def test_each_tracked_file_alone_gets_one_label():
+    """A file with no label leaves a pull request that changes only it unlabelled, and two labels say nothing."""
     tracked = subprocess.run(
         ["git", "ls-files"], cwd=ROOT, capture_output=True, check=True, text=True
     ).stdout.splitlines()
-    named = {
-        name
-        for entries in _labeler().values()
-        for glob in _globs(entries)
-        if not glob.startswith("!")
-        for name in re.split(r"[{},]", glob)
-    }
-    directories = {path.split("/")[0] + "/**" for path in tracked if "/" in path}
-    # Markdown at the root is docs-only through "**/*.md" unless named.
-    files = {path for path in tracked if "/" not in path and not path.endswith(".md")}
-    unlabelled = sorted((directories | files) - named)
-    assert unlabelled == [], f"add {unlabelled} to a label in .github/labeler.yml"
+    wrong = {path: sorted(_labels([path])) for path in tracked}
+    wrong = {path: labels for path, labels in wrong.items() if len(labels) != 1}
+    assert wrong == {}, "fix these in .github/labeler.yml"
