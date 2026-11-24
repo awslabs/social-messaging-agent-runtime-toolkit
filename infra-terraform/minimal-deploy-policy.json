@@ -120,6 +120,7 @@
         "logs:CreateLogGroup", "logs:DeleteLogGroup", "logs:DescribeLogGroups",
         "logs:PutRetentionPolicy", "logs:TagResource",
         "logs:PutResourcePolicy", "logs:DeleteResourcePolicy", "logs:DescribeResourcePolicies",
+        "logs:PutDataProtectionPolicy", "logs:GetDataProtectionPolicy", "logs:DeleteDataProtectionPolicy",
         "cloudwatch:PutMetricAlarm", "cloudwatch:DeleteAlarms", "cloudwatch:DescribeAlarms",
         "cloudwatch:PutDashboard", "cloudwatch:DeleteDashboards", "cloudwatch:GetDashboard"
       ],

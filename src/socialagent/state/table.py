@@ -32,6 +32,16 @@ from socialagent.config import SocialAgentConfig
 from socialagent.constants import DEV_MODE_VALUE
 
 
+def _expired(item: dict) -> bool:
+    """Whether a stored item's ``ttl`` has passed.
+
+    DynamoDB deletes expired items in the background, so one can still be
+    returned for days. An item with no ``ttl`` never expires.
+    """
+    ttl = item.get("ttl")
+    return ttl is not None and ttl < int(time.time())
+
+
 class SocialAgentState:
     """DynamoDB-backed key-value state store scoped to phone numbers.
 
@@ -74,18 +84,22 @@ class SocialAgentState:
             key: State key (sort key).
 
         Returns:
-            The stored value, or ``None`` if not found or table not configured.
+            The stored value, or ``None`` if not found, its ``ttl`` has passed
+            (even when DynamoDB has not deleted it yet), or the table is not
+            configured.
         """
         table = self._table()
         if table is None:
             return None
 
         def _read() -> Any | None:
-            resp = table.get_item(Key={"pk": phone, "sk": key})
+            item = table.get_item(Key={"pk": phone, "sk": key}).get("Item") or {}
+            if _expired(item):
+                return None
             # Same table the agent's atomic_increment writes to, whose counter
             # items carry no `data` attribute, so a missing `data` must read as None
             # rather than raise KeyError.
-            raw = (resp.get("Item") or {}).get("data")
+            raw = item.get("data")
             return json.loads(raw) if raw is not None else None
 
         return await asyncio.to_thread(_read)
@@ -148,7 +162,8 @@ class SocialAgentState:
                 record that belongs to no user.
             name: The event's name; stored under ``claim#{name}``.
             ttl_minutes: How long the marker is kept. DynamoDB deletes expired
-                items lazily, so a marker can outlive this.
+                items lazily, so a marker can outlive this; one past its ``ttl``
+                counts as absent, so it does not refuse a new claim.
 
         Returns:
             True when this call wrote the marker, False when it already
@@ -173,7 +188,9 @@ class SocialAgentState:
                         "data": json.dumps(now),
                         "ttl": now + ttl_minutes * 60,
                     },
-                    ConditionExpression="attribute_not_exists(sk)",
+                    ConditionExpression="attribute_not_exists(sk) OR #ttl < :now",
+                    ExpressionAttributeNames={"#ttl": "ttl"},
+                    ExpressionAttributeValues={":now": now},
                 )
             except ClientError as exc:
                 if (

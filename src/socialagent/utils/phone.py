@@ -5,7 +5,9 @@
 Phone number normalization and ID derivation utilities.
 """
 
+import logging
 import re
+import traceback
 
 
 def normalize_phone(phone: str) -> str:
@@ -75,3 +77,80 @@ def mask_phone(value: str | None) -> str:
     if len(digits) >= 5 and _PHONE_SHAPED.fullmatch(text):
         return ("+" if text.startswith("+") else "") + "..." + digits[-4:]
     return _DIGIT_RUN.sub(lambda m: "..." + m.group()[-4:], text)
+
+
+def _move_exception(record: logging.LogRecord) -> None:
+    """Replace ``record.exc_info`` with its masked text, and clear it.
+
+    ``exc_text`` serves a standard ``logging.Formatter``. OpenTelemetry's
+    ``LoggingHandler`` reads only ``exc_info``, and exports the record's other
+    attributes as they are, so the exception also goes on the record as its
+    three ``exception.*`` attributes, masked. Never raises, even for a
+    malformed ``exc_info`` such as ``(1, 2)``.
+    """
+    exc_info = record.exc_info
+    record.exc_info = None
+    try:
+        text = "".join(traceback.format_exception(*exc_info))
+        record.exc_text = mask_phone(text.rstrip("\n"))
+    except Exception:  # noqa: BLE001 - a log call must never raise
+        record.exc_text = "<unformattable exception>"
+        return
+    exc_type = exc_info[0]
+    if exc_type is None:
+        return
+    setattr(record, "exception.type", exc_type.__qualname__)
+    try:
+        message = mask_phone(str(exc_info[1]))
+    except Exception:  # noqa: BLE001 - nor when the exception cannot print
+        message = "<unprintable exception>"
+    setattr(record, "exception.message", message)
+    setattr(record, "exception.stacktrace", record.exc_text)
+
+
+# Marks a record factory that masks, so neither copy of install_log_masking
+# wraps one that either copy already installed.
+_MASKING_MARKER = "_socialagent_masks_phone_numbers"
+
+
+def install_log_masking() -> None:
+    """Mask every phone number in every log record, its traceback included.
+
+    Wraps the current log record factory, which runs when a record is made and
+    so before any handler or formatter, whoever installed them and whenever.
+    Each record's message is formatted and masked with ``mask_phone``, and
+    ``args`` cleared. A record's exception is formatted, chained exceptions
+    included, into a masked ``exc_text``, and ``exc_info`` cleared, so a
+    formatter that reads the exception itself finds none; ``stack_info`` is
+    masked too. This also cuts every other run of five or more digits in a log
+    line, such as an account id, to its last four.
+
+    Calling it again, from either layer's copy, does nothing.
+    """
+    previous = logging.getLogRecordFactory()
+    if getattr(previous, _MASKING_MARKER, False):
+        return
+
+    def factory(*args, **kwargs) -> logging.LogRecord:
+        record = previous(*args, **kwargs)
+        try:
+            message = record.getMessage()
+        except Exception:  # noqa: BLE001 - a log call must never raise
+            try:
+                message = f"{record.msg} {record.args!r}"
+            except Exception:  # noqa: BLE001 - nor when the message cannot print
+                message = (
+                    f"<unprintable log message from {record.pathname}:{record.lineno}>"
+                )
+        record.msg = mask_phone(message)
+        record.args = None
+        if record.exc_info:
+            _move_exception(record)
+        elif record.exc_text:
+            record.exc_text = mask_phone(record.exc_text)
+        if record.stack_info:
+            record.stack_info = mask_phone(record.stack_info)
+        return record
+
+    setattr(factory, _MASKING_MARKER, True)
+    logging.setLogRecordFactory(factory)

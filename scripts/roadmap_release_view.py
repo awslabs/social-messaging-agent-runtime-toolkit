@@ -33,7 +33,8 @@ STATUS_LABEL = {
     "⬜": "Not started",
     "⏸": "Blocked",
 }
-RELEASE_ORDER = ["2026.10", "2026.11", "later"]
+# A release is YYYY.M; any other value (``later``) is listed last as Later.
+CALVER = re.compile(r"(\d{4})\.(\d{1,2})")
 
 
 def _short(story: str) -> str:
@@ -91,9 +92,22 @@ def stories(markdown: str) -> list[tuple[str, str, str]]:
     return rows
 
 
+def _release_order(releases: set[str]) -> list[str]:
+    """Every CalVer release in the tables, oldest first, then ``later``.
+
+    Read from the rows rather than listed here, so a story moved to a new
+    release gets its own line instead of landing under Later.
+    """
+    calver = [r for r in releases if CALVER.fullmatch(r)]
+    calver.sort(key=lambda r: tuple(int(p) for p in CALVER.fullmatch(r).groups()))
+    return [*calver, "later"]
+
+
 def render(markdown: str) -> str:
-    by_release: dict[str, dict[str, list[str]]] = {r: {} for r in RELEASE_ORDER}
-    for name, release, status in stories(markdown):
+    rows = stories(markdown)
+    order = _release_order({release for _, release, _ in rows})
+    by_release: dict[str, dict[str, list[str]]] = {r: {} for r in order}
+    for name, release, status in rows:
         key = release if release in by_release else "later"
         by_release[key].setdefault(status, []).append(name)
 
@@ -105,7 +119,7 @@ def render(markdown: str) -> str:
         "A test fails if this section is edited by hand.",
         "",
     ]
-    for release in RELEASE_ORDER:
+    for release in order:
         groups = by_release[release]
         if not groups:
             continue

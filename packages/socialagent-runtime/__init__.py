@@ -19,10 +19,24 @@ from ._devfiles import dev_dir, private_dir
 from ._history import list_replay_safe
 from .phone import (
     actor_id_for_phone,
+    install_log_masking,
     mask_phone,
     normalize_phone,
     session_id_for_phone,
 )
+
+# An exception's text or traceback can quote a user's number; a record factory
+# masks it before any handler sees the record, whoever installs the handlers.
+install_log_masking()
+
+try:
+    from ._span_masking import install_span_masking
+except ImportError:
+    from _span_masking import install_span_masking  # type: ignore[no-redef]
+
+# The same text recorded on an OpenTelemetry span (ADOT exports every span);
+# masked on the SDK's Span before the span ends, whoever records it.
+install_span_masking()
 
 logger = logging.getLogger(__name__)
 

@@ -5,24 +5,25 @@
 
 Static checks over the ``.tf`` sources: no AWS credentials, no provider
 download, no plan of the stack. Each pins a control the threat model relies
-on, where a one-line Terraform edit would quietly undo it. Eighteen tests
+on, where a one-line Terraform edit would quietly undo it. Nineteen tests
 also run Terraform when the binary is on PATH, in throwaway roots that have no
-providers, so they need no ``init`` and make no network call: thirteen
+providers, so they need no ``init`` and make no network call: fourteen
 evaluate expressions with ``terraform console`` (bootstrap's shared-bucket
 grants against the security-logging module's, the agent-source filters, the
 guardrail's version description and topic policy, the root's guardrail policy
 variables, the guardrail the root chooses and the ARN it builds for an id, the
 values ``guardrail`` and ``guardrail_version`` accept, the removed
 ``enable_guardrails``, which refuses every value, the ``agent.environment``
-keys the root reserves, the alarm topic's key as a deployer sets it, and both
-SNS topics' keys as a stack sets ``sns_kms_key_arn``), and five run
+keys the root reserves, the alarm topic's key as a deployer sets it, both
+SNS topics' keys as a stack sets ``sns_kms_key_arn``, and the runtime log
+group's data protection policy against the Lambda groups'), and five run
 ``terraform plan``: two for the ``sns_kms_key_arn`` validation, one for the
 precondition that takes a guardrail version only with a guardrail of your own,
 one for the precondition that fails on a guardrail in another Region or
 partition, and one for the check that warns about a guardrail in another
-account. Two more run commands the ``.tf`` files embed, in a subprocess with
-stand-ins: the zip build's host check, and the agent builds' wait loop against
-a fake ``aws``.
+account. Three more run commands the ``.tf`` files embed, in a subprocess with
+stand-ins: the zip build's host check, and the agent builds' wait loop and the
+runtime log group's create and retention steps against a fake ``aws``.
 """
 
 from __future__ import annotations
@@ -2446,6 +2447,10 @@ _RESERVED_ENVIRONMENT = {
     "nothing": ({}, True),
     "the model": ({"MODEL_ID": "eu.anthropic.claude-haiku-5-5"}, True),
     "other keys": ({"MODEL_ID": "", "LOG_LEVEL": "DEBUG"}, True),
+    "the Bedrock-call content switch": (
+        {"OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": "true"},
+        True,
+    ),
     "the guardrail id": ({"BEDROCK_GUARDRAIL_ID": _OWN_ID}, False),
     "the guardrail version": ({"BEDROCK_GUARDRAIL_VERSION": "2"}, False),
     "another guardrail key": ({"BEDROCK_GUARDRAIL_X": "1"}, False),
@@ -2899,11 +2904,322 @@ def test_the_stack_invokes_only_the_default_endpoint():
 def test_agent_dashboard_reads_the_runtime_log_group():
     """``/aws/bedrock-agentcore/runtimes/<runtime id>-<endpoint>``, the group the runtime writes."""
     tf = _code(OBSERVABILITY.read_text())
+    assert _assigned(_block(tf, "locals {"), "runtime_log_group") == (
+        '"/aws/bedrock-agentcore/runtimes/${var.runtime_id}-${local.runtime_endpoint}"'
+    )
     dashboard = _block(tf, 'resource "aws_cloudwatch_dashboard" "agent"')
     sources = re.findall(r"SOURCE '([^']+)'", dashboard)
-    assert sources == [
-        "/aws/bedrock-agentcore/runtimes/${var.runtime_id}-${local.runtime_endpoint}"
+    assert sources == ["${local.runtime_log_group}"]
+
+
+# =============================================================================
+# The agent runtime's log group: no Bedrock-call content, masked, kept 30 days
+# =============================================================================
+
+_CONTENT_SWITCH = "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"
+_RUNTIME_LOG_GROUP_STEP = 'resource "null_resource" "runtime_log_group"'
+_RUNTIME_LOG_RETENTION_STEP = 'resource "null_resource" "runtime_log_retention"'
+_RUNTIME_POLICY_HEADER = (
+    'resource "aws_cloudwatch_log_data_protection_policy" "runtime"'
+)
+_LAMBDA_POLICY_HEADER = 'resource "aws_cloudwatch_log_data_protection_policy" "pii"'
+
+
+def test_runtime_logs_no_bedrock_call_content_unless_the_project_asks():
+    """The stack's own variables turn the Bedrock instrumentation's message
+    content off, and ``agent.environment``, merged after them, can turn it on.
+
+    AgentCore Runtime sets ``AGENT_OBSERVABILITY_ENABLED``, under which
+    ``aws-opentelemetry-distro`` sets the switch to ``true`` unless it is
+    already set, and the instrumentation then logs each model call's whole
+    request, the restored history and image bytes included, to the runtime's
+    log group. Strands' own copy of each turn stays on: AgentCore Evaluations
+    and the GenAI Observability prompt views read it, so no ``.tf`` file sets
+    ``OTEL_SEMCONV_STABILITY_OPT_IN``, which would redact that copy too.
+    """
+    runtime = _block(_code((INFRA / "main.tf").read_text()), 'module "runtime"')
+    match = re.search(r"^\s*environment_variables\s*=\s*merge", runtime, re.M)
+    assert match, "the runtime's environment is no longer a merge"
+    own, *rest = _top_level_args(_balanced(runtime, match.end()))
+    assert _assigned(own, _CONTENT_SWITCH) == '"false"', (
+        f"the stack's own runtime variables no longer set {_CONTENT_SWITCH}"
+    )
+    assert rest == ["var.agent_environment_variables"], rest
+
+    def sets(name: str, code: str) -> bool:
+        return re.search(rf'\b{name}"?\s*=', code) is not None
+
+    for tf_file in sorted(INFRA.rglob("*.tf")):
+        if ".terraform" in tf_file.parts:
+            continue
+        code = _code(tf_file.read_text())
+        assert not sets("OTEL_SEMCONV_STABILITY_OPT_IN", code), (
+            f"{tf_file} redacts Strands' spans, which Evaluations reads"
+        )
+        if tf_file != INFRA / "main.tf":
+            assert not sets(_CONTENT_SWITCH, code), (
+                f"{tf_file} also sets {_CONTENT_SWITCH}"
+            )
+
+
+def _runtime_log_step(tf: str, header: str) -> str:
+    """The ``null_resource`` at *header*, found by text: a shell ``case``
+    pattern's ``)`` would end ``_block`` early."""
+    start = tf.index(header)
+    return tf[start : tf.index("\n}\n", start)]
+
+
+def test_runtime_log_group_keeps_its_events_as_long_as_the_lambda_groups():
+    """30 days, the Lambda groups' own value, set by a step that runs once the
+    runtime exists, whatever ``enable_pii_log_protection`` says.
+
+    AgentCore creates the group with no retention, so without the step every
+    event the runtime writes there is kept for good. The steps run again when
+    the group's name (a new runtime) or the retention changes.
+    """
+    tf = _code(MONITORING.read_text())
+    assert _assigned(_block(tf, "locals {"), "log_retention_days") == "30"
+    lambda_groups = _block(tf, 'resource "aws_cloudwatch_log_group" "lambda_logs"')
+    assert _assigned(lambda_groups, "retention_in_days") == "local.log_retention_days"
+
+    create = _runtime_log_step(tf, _RUNTIME_LOG_GROUP_STEP)
+    retention = _runtime_log_step(tf, _RUNTIME_LOG_RETENTION_STEP)
+    for step in (create, retention):
+        assert not re.search(r"^\s*count\s*=", step, re.M), f"gated: {step[:60]}"
+    assert _hcl_map(create, "triggers") == {"log_group": "var.runtime_log_group_name"}
+    assert _hcl_map(retention, "triggers") == {
+        "log_group": "var.runtime_log_group_name",
+        "retention_days": "local.log_retention_days",
+    }
+    assert "--retention-in-days ${local.log_retention_days} " in retention
+
+
+_LOG_GROUP_ERROR = "An error occurred ({}) when calling the CreateLogGroup operation"
+# What the stand-in aws answers -> what the step does: the step, the error
+# create-log-group fails with (none: it succeeds), put-retention-policy's exit
+# code and the step's exit code.
+_RUNTIME_LOG_STEPS = {
+    "creates the group": (_RUNTIME_LOG_GROUP_STEP, None, 0, 0),
+    "finds the group": (
+        _RUNTIME_LOG_GROUP_STEP,
+        "ResourceAlreadyExistsException",
+        0,
+        0,
+    ),
+    "is denied the create": (_RUNTIME_LOG_GROUP_STEP, "AccessDeniedException", 0, 1),
+    "is throttled": (_RUNTIME_LOG_GROUP_STEP, "ThrottlingException", 0, 1),
+    "sets the retention": (_RUNTIME_LOG_RETENTION_STEP, None, 0, 0),
+    "is denied the retention": (_RUNTIME_LOG_RETENTION_STEP, None, 254, 1),
+}
+# The one aws logs command each step runs.
+_RUNTIME_LOG_STEP_COMMAND = {
+    _RUNTIME_LOG_GROUP_STEP: "create-log-group",
+    _RUNTIME_LOG_RETENTION_STEP: "put-retention-policy",
+}
+
+
+@pytest.mark.parametrize("case", sorted(_RUNTIME_LOG_STEPS))
+def test_runtime_log_group_steps_tolerate_only_a_group_that_exists(
+    tmp_path: Path, case: str
+):
+    """Each step's ``local-exec`` script, against a stand-in ``aws``.
+
+    A create that finds the group, which AgentCore has usually made by then,
+    succeeds; any other failure of either call fails the apply. Going on after
+    one would leave the group with no retention, or the data protection policy
+    to fail on a group that does not exist.
+    """
+    header, create_error, retention_exit, exit_code = _RUNTIME_LOG_STEPS[case]
+    tf = _code(MONITORING.read_text())
+    script = _heredoc(tf, header, "command")
+    group = "/aws/bedrock-agentcore/runtimes/dev_bot_runtime-AbCdE12345-DEFAULT"  # pragma: allowlist secret
+    days = _assigned(_block(tf, "locals {"), "log_retention_days")
+    values = {
+        "var.runtime_log_group_name": group,
+        "local.log_retention_days": days,
+        "data.aws_region.current.id": "us-east-1",
+    }
+    placeholders = set(re.findall(r"\$\{([^}]*)\}", script))
+    assert placeholders <= set(values), placeholders - set(values)
+    for name, value in values.items():
+        script = script.replace("${" + name + "}", value)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    aws = bin_dir / "aws"
+    aws.write_text(
+        "#!/bin/sh\n"
+        'echo "$*" >> "$CALLS"\n'
+        'case "$2" in\n'
+        "  create-log-group)\n"
+        '    if [ -n "$CREATE_ERROR" ]; then echo "$CREATE_ERROR" >&2; exit 254; fi ;;\n'
+        '  put-retention-policy) exit "$RETENTION_EXIT" ;;\n'
+        "  *) exit 2 ;;\n"
+        "esac\n"
+    )
+    aws.chmod(0o755)
+    calls = tmp_path / "calls"
+    result = subprocess.run(
+        ["/bin/sh", "-c", script],
+        env={
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "CALLS": str(calls),
+            "CREATE_ERROR": _LOG_GROUP_ERROR.format(create_error)
+            if create_error
+            else "",
+            "RETENTION_EXIT": str(retention_exit),
+        },
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == exit_code, result.stdout + result.stderr
+    (made,) = calls.read_text().splitlines()
+    assert made.split()[:2] == ["logs", _RUNTIME_LOG_STEP_COMMAND[header]], made
+    assert f"--log-group-name {group} " in made and "--region us-east-1" in made
+    if header == _RUNTIME_LOG_RETENTION_STEP:
+        assert f"--retention-in-days {days} " in made
+    if exit_code:
+        assert "ERROR:" in result.stderr, result.stderr
+
+
+def test_runtime_log_group_policy_follows_the_pii_switch_and_waits_for_the_group():
+    """Gated by ``enable_pii_log_protection``, like the Lambda groups' policy,
+    on the group module.observability names, and applied after the step that
+    makes sure the group exists (``PutDataProtectionPolicy`` fails on a group
+    that does not), not after the retention, whose failure would then leave
+    the group unmasked too.
+
+    Only modules/monitoring puts a data protection policy or a retention on a
+    log group by hand, so a change to the Lambda groups' policy or retention
+    reaches the runtime's.
+    """
+    tf = _code(MONITORING.read_text())
+    policy = _block(tf, _RUNTIME_POLICY_HEADER)
+    assert _assigned(policy, "count") == "var.enable_pii_protection ? 1 : 0"
+    assert _assigned(policy, "log_group_name") == "var.runtime_log_group_name"
+    assert _assigned(policy, "policy_document") == (
+        "jsonencode(local.runtime_pii_policy)"
+    )
+    assert _assigned(policy, "depends_on") == "[null_resource.runtime_log_group]"
+    lambdas = _block(tf, _LAMBDA_POLICY_HEADER)
+    assert _assigned(lambdas, "for_each").startswith("var.enable_pii_protection ? ")
+    assert _assigned(lambdas, "policy_document") == "jsonencode(local.pii_policy)"
+    assert _assigned(
+        _runtime_log_step(tf, _RUNTIME_LOG_RETENTION_STEP), "depends_on"
+    ) == ("[null_resource.runtime_log_group]")
+
+    root = _code((INFRA / "main.tf").read_text())
+    call = _block(root, 'module "monitoring"')
+    assert _assigned(call, "enable_pii_protection") == "var.enable_pii_log_protection"
+    assert _assigned(call, "runtime_log_group_name") == (
+        "module.observability.runtime_log_group"
+    )
+    output = _block(_code(OBSERVABILITY.read_text()), 'output "runtime_log_group"')
+    assert _assigned(output, "value") == "local.runtime_log_group"
+
+    owners = {
+        str(tf_file.relative_to(INFRA))
+        for tf_file in INFRA.rglob("*.tf")
+        if ".terraform" not in tf_file.parts
+        and re.search(
+            r"aws_cloudwatch_log_data_protection_policy|put-retention-policy",
+            _code(tf_file.read_text()),
+        )
+    }
+    assert owners == {"modules/monitoring/main.tf"}, owners
+
+
+def _inputs_and_locals(tf: str) -> str:
+    """Every ``variable`` block of the module *tf* and its ``locals`` block.
+
+    A root of only these needs no provider, so ``terraform console`` evaluates
+    the module's locals without ``init``.
+    """
+    blocks = [
+        match.group(0) + _balanced(tf, tf.index("{", match.start()))
+        for match in re.finditer(r'^variable "\w+"\s*', tf, re.M)
     ]
+    blocks.append("locals " + _block(tf, "locals {"))
+    return "\n".join(blocks) + "\n"
+
+
+def _runtime_custom_identifiers() -> dict[str, str]:
+    """The runtime policy's custom data identifiers, name to regex as CloudWatch Logs gets it."""
+    locals_block = _block(_code(MONITORING.read_text()), "locals {")
+    return {
+        name: json.loads(value)
+        for name, value in _hcl_map(
+            locals_block, "runtime_custom_data_identifiers"
+        ).items()
+    }
+
+
+def test_runtime_log_group_masks_what_the_lambda_groups_mask_and_more(tmp_path: Path):
+    """The runtime's policy is the Lambda groups', evaluated, with the custom
+    identifiers declared and added to both statements.
+
+    CloudWatch Logs requires the audit and the de-identify statements to list
+    the same identifiers, and a country a deployer adds to
+    ``pii_phone_number_countries`` is masked in both places.
+    """
+    terraform = _terraform_or_skip()
+    root = tmp_path / "monitoring"
+    root.mkdir()
+    (root / "main.tf").write_text(_inputs_and_locals(_code(MONITORING.read_text())))
+    variables = {
+        "project_name": "bot",
+        "environment": "dev",
+        "lambda_function_names": '["dev-bot-webhook"]',
+        "runtime_log_group_name": "/aws/bedrock-agentcore/runtimes/dev_bot_runtime-AbCdE12345-DEFAULT",  # pragma: allowlist secret
+        "pii_phone_number_countries": '["US", "GB"]',
+    }
+    managed, lambda_policy, runtime_policy = [
+        _console(terraform, root, f"local.{name}", variables, tmp_path / "tf")
+        for name in ("pii_data_identifiers", "pii_policy", "runtime_pii_policy")
+    ]
+    assert "arn:aws:dataprotection::aws:data-identifier/PhoneNumber-GB" in managed
+    assert [s["DataIdentifier"] for s in lambda_policy["Statement"]] == [
+        managed,
+        managed,
+    ]
+
+    custom = sorted(_runtime_custom_identifiers().items())
+    assert runtime_policy.pop("Configuration") == {
+        "CustomDataIdentifier": [{"Name": n, "Regex": r} for n, r in custom]
+    }
+    for statement in lambda_policy["Statement"]:
+        statement["DataIdentifier"] = managed + [name for name, _ in custom]
+    assert runtime_policy == lambda_policy
+
+
+# A custom data identifier's name and regex, as CloudWatch Logs accepts them:
+# https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/CWL-custom-data-identifiers.html
+_CUSTOM_IDENTIFIER_NAME = re.compile(r"[A-Za-z0-9_-]{1,128}")
+_CUSTOM_IDENTIFIER_REGEX_CHARACTERS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    "_#=@/;,- '\"" + "^$?[]{}|\\*+."
+)
+
+
+def test_runtime_custom_identifiers_are_ones_cloudwatch_logs_accepts():
+    """At most 10, each named with letters, digits, ``_`` and ``-`` and not as
+    a managed identifier, with a regex of up to 200 characters from the set
+    CloudWatch Logs allows, which has no ``(`` or ``)``."""
+    custom = _runtime_custom_identifiers()
+    assert 0 < len(custom) <= 10
+    managed = re.findall(
+        r"data-identifier/([A-Za-z]+)",
+        _block(_code(MONITORING.read_text()), "locals {"),
+    )
+    assert managed, "no managed identifiers found in module.monitoring"
+    for name, regex in custom.items():
+        assert _CUSTOM_IDENTIFIER_NAME.fullmatch(name), name
+        assert name not in managed, f"{name} is a managed identifier's name"
+        assert len(regex) <= 200, name
+        assert set(regex) <= _CUSTOM_IDENTIFIER_REGEX_CHARACTERS, (
+            f"{name} uses {sorted(set(regex) - _CUSTOM_IDENTIFIER_REGEX_CHARACTERS)}"
+        )
+        re.compile(regex)
 
 
 def test_no_alarm_watches_a_namespace_of_the_stacks_own():
@@ -3274,6 +3590,100 @@ def test_agent_build_wait_fails_the_apply_unless_the_build_succeeds(
         timeout=60,
     )
     assert result.returncode == exit_code, result.stdout + result.stderr
+
+
+_BUILD_SCRIPTS = {
+    "build_layer": INFRA / "packaging.tf",
+    "trigger_build": CODEBUILD_TF,
+    "build_zip_package": CODEBUILD_TF,
+    "trigger_template_sync": INFRA / "modules" / "templates" / "main.tf",
+}
+
+
+def _run_build_script(tmp_path: Path, resource: str, builds: list[tuple[str, str]]):
+    """Run a build provisioner against a stand-in ``aws`` and a no-op ``sleep``.
+
+    *builds* gives, per ``start-build``, the build's final status and what the
+    never-ran query answers for it (``"1"`` when it failed in ``QUEUED`` with
+    ``CLIENT_ERROR``, ``"0"`` otherwise). Returns the result and the number of builds started.
+    """
+    header = f'resource "null_resource" "{resource}"'
+    script = _heredoc(_code(_BUILD_SCRIPTS[resource].read_text()), header, "command")
+    # Innermost first: the layer script's S3 key nests one interpolation in another.
+    while (done := re.sub(r"\$\{[^{}]*\}", "placeholder", script)) != script:
+        script = done
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    state = tmp_path / "starts"
+    state.write_text("0")
+    table = "\n".join(f"  {i}) S={st}; Q={q} ;;" for i, (st, q) in enumerate(builds, 1))
+    aws = bin_dir / "aws"
+    aws.write_text(
+        "#!/bin/sh\n"
+        f'n=$(cat "{state}")\n'
+        'case "$2" in\n'
+        f'  start-build) n=$((n + 1)); echo "$n" > "{state}"; echo "build-$n"; exit 0 ;;\n'
+        "  cp) exit 0 ;;\n"
+        "  batch-get-builds) ;;\n"
+        "  *) exit 2 ;;\n"
+        "esac\n"
+        'case "$n" in\n'
+        f"{table}\n"
+        "  *) exit 2 ;;\n"
+        "esac\n"
+        'case "$*" in *phases*) echo "$Q" ;; *) echo "$S" ;; esac\n'
+    )
+    aws.chmod(0o755)
+    sleep = bin_dir / "sleep"
+    sleep.write_text("#!/bin/sh\nexit 0\n")
+    sleep.chmod(0o755)
+    result = subprocess.run(
+        ["/bin/sh", "-c", script],
+        env={"PATH": f"{bin_dir}:/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    return result, int(state.read_text())
+
+
+@pytest.mark.parametrize("resource", sorted(_BUILD_SCRIPTS))
+def test_a_build_that_could_not_start_is_started_again(tmp_path: Path, resource: str):
+    """On a first deploy CodeBuild can try a build before its new service role's
+    policy applies, and fails it in QUEUED with CLIENT_ERROR, having run nothing
+    (#211). The script starts it again instead of failing the apply."""
+    result, starts = _run_build_script(
+        tmp_path,
+        resource,
+        [
+            ("FAILED", "1"),
+            ("FAILED", "1"),
+            ("SUCCEEDED", "0"),
+        ],
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert starts == 3
+    assert "could not start (CLIENT_ERROR while queued" in result.stderr
+
+
+@pytest.mark.parametrize("resource", sorted(_BUILD_SCRIPTS))
+def test_a_build_that_ran_and_failed_is_not_started_again(
+    tmp_path: Path, resource: str
+):
+    """A build that got past QUEUED and failed is a real failure: one start, exit 1."""
+    result, starts = _run_build_script(tmp_path, resource, [("FAILED", "0")])
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert starts == 1
+
+
+@pytest.mark.parametrize("resource", sorted(_BUILD_SCRIPTS))
+def test_a_build_that_never_starts_gives_up_after_six_tries(
+    tmp_path: Path, resource: str
+):
+    """A role that is wrong, not just new, still fails the apply, after six starts."""
+    result, starts = _run_build_script(tmp_path, resource, [("FAILED", "1")] * 7)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert starts == 6
 
 
 # =============================================================================

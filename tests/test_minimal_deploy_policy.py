@@ -166,3 +166,37 @@ def test_arn_templates_track_the_terraform_function_names() -> None:
     assert 'function_name = "${local.prefix}-webhook"' in terraform
     assert 'function_name = "${local.prefix}-scheduler"' in terraform
     assert _invoke_config_functions() == {"webhook", "scheduler"}
+
+
+def test_deployer_can_protect_and_expire_the_runtime_log_group() -> None:
+    """The runtime log group's steps run ``aws logs`` with the deployer's
+    credentials, and the provider puts, reads and deletes the data protection
+    policies on it and on the Lambda groups.
+
+    Each ``aws logs <command>`` in the module must be granted, read from the
+    module itself, so a command added to it later fails here until it is."""
+    monitoring = (
+        _REPO_ROOT / "infra-terraform" / "modules" / "monitoring" / "main.tf"
+    ).read_text()
+    code = re.sub(r"^\s*#.*$", "", monitoring, flags=re.MULTILINE)
+    commands = re.findall(r"\baws logs ([a-z-]+)", code)
+    assert commands, "the runtime log group steps run no aws logs command"
+    needed = {
+        "logs:" + "".join(word.capitalize() for word in command.split("-"))
+        for command in commands
+    } | {
+        "logs:PutDataProtectionPolicy",
+        "logs:GetDataProtectionPolicy",
+        "logs:DeleteDataProtectionPolicy",
+    }
+    assert {"logs:CreateLogGroup", "logs:PutRetentionPolicy"} <= needed
+    policy = json.loads(_POLICY_PATH.read_text())
+    granted = {
+        action
+        for statement in policy["Statement"]
+        if statement.get("Effect") == "Allow"
+        for pattern in _as_list(statement.get("Action", []))
+        for action in needed
+        if _matches_action(pattern, action)
+    }
+    assert granted == needed, f"not granted: {sorted(needed - granted)}"

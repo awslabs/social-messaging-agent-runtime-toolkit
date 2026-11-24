@@ -54,6 +54,26 @@ def _get_table() -> Any | None:
     return boto3.resource("dynamodb").Table(table_name)
 
 
+def _expired(item: dict) -> bool:
+    """Whether a stored item's ``ttl`` has passed.
+
+    DynamoDB deletes expired items in the background, so one can still be
+    returned for days. An item with no ``ttl`` never expires.
+    """
+    ttl = item.get("ttl")
+    return ttl is not None and ttl < int(time.time())
+
+
+def _live() -> Any:
+    """A query filter that keeps only items ``_expired`` would not reject.
+
+    ``list_keys`` and ``list_items`` use it so they agree with ``get``;
+    ``delete_prefix`` does not, so cleanup still removes expired items.
+    """
+    attr = boto3.dynamodb.conditions.Attr("ttl")
+    return attr.not_exists() | attr.gte(int(time.time()))
+
+
 def _dev_read() -> dict:
     """Read the dev-mode state JSON file, returning ``{}`` if absent or corrupt."""
     try:
@@ -86,20 +106,23 @@ async def get(phone: str, key: str) -> Any | None:
         key: State key (sort key).
 
     Returns:
-        The stored value, or ``None`` if no entry exists.
+        The stored value, or ``None`` if no entry exists or its ``ttl`` has
+        passed, even when DynamoDB has not deleted it yet.
     """
     table = _get_table()
     if table is None:
         return _dev_read().get(f"{phone}#{key}")
 
     def _read() -> Any | None:
-        resp = table.get_item(Key={"pk": phone, "sk": key})
+        item = table.get_item(Key={"pk": phone, "sk": key}).get("Item") or {}
+        if _expired(item):
+            return None
         # An item can exist without a `data` attribute — atomic_increment writes
         # only pk/sk/n/ttl, and list_keys does not hide the reserved counter#/claim#
         # namespaces from callers. `item["data"]` then raised KeyError where the
         # docstring promises None, and the dev branch above returns the raw stored
         # value, so the same read crashed in prod but "worked" under socialagent dev.
-        raw = (resp.get("Item") or {}).get("data")
+        raw = item.get("data")
         return json.loads(raw) if raw is not None else None
 
     return await asyncio.to_thread(_read)
@@ -163,6 +186,7 @@ async def list_keys(phone: str) -> list[str]:
         keys: list[str] = []
         kwargs: dict[str, Any] = {
             "KeyConditionExpression": boto3.dynamodb.conditions.Key("pk").eq(phone),
+            "FilterExpression": _live(),
             "ProjectionExpression": "sk",
         }
         while True:
@@ -235,6 +259,8 @@ async def claim_once(phone: str, name: str, ttl_minutes: int = 60) -> bool:
     would let two concurrent callers both observe "not claimed" and both proceed.
     The marker carries a short TTL so the claim ledger self-cleans (a duplicate
     arriving days later is vanishingly unlikely and not worth retaining state for).
+    A marker past its ``ttl`` that DynamoDB has not deleted yet counts as absent,
+    so it does not refuse a new claim.
 
     Stored under sk = f"claim#{name}" so it never collides with regular state.
     In dev mode there is no concurrency, so a plain presence check suffices.
@@ -253,15 +279,19 @@ async def claim_once(phone: str, name: str, ttl_minutes: int = 60) -> bool:
     def _claim() -> bool:
         from botocore.exceptions import ClientError
 
+        now = int(time.time())
         try:
             table.put_item(
                 Item={
                     "pk": phone,
                     "sk": sk,
-                    "data": json.dumps(int(time.time())),
-                    "ttl": int(time.time()) + ttl_minutes * 60,
+                    "data": json.dumps(now),
+                    "ttl": now + ttl_minutes * 60,
                 },
-                ConditionExpression="attribute_not_exists(sk)",
+                # An expired marker DynamoDB has not deleted yet counts as absent.
+                ConditionExpression="attribute_not_exists(sk) OR #ttl < :now",
+                ExpressionAttributeNames={"#ttl": "ttl"},
+                ExpressionAttributeValues={":now": now},
             )
             return True
         except ClientError as e:
@@ -348,24 +378,28 @@ async def compare_and_set(
         from botocore.exceptions import ClientError
 
         value = factory()
+        now = int(time.time())
         try:
+            # An expired item DynamoDB has not deleted yet is absent: it must not
+            # block expected=None, and its stale `data` must not match `expected`.
             if expected is None:
-                cond = "attribute_not_exists(sk)"
-                names, values = {}, {}
+                cond = "attribute_not_exists(sk) OR #ttl < :now"
+                names = {"#ttl": "ttl"}
+                values = {":now": now}
             else:
-                cond = "#d = :expected"
-                names = {"#d": "data"}
-                values = {":expected": json.dumps(expected)}
+                cond = "#d = :expected AND (attribute_not_exists(#ttl) OR #ttl >= :now)"
+                names = {"#d": "data", "#ttl": "ttl"}
+                values = {":expected": json.dumps(expected), ":now": now}
             table.put_item(
                 Item={
                     "pk": phone,
                     "sk": key,
                     "data": json.dumps(value),
-                    "ttl": int(time.time()) + ttl_minutes * 60,
+                    "ttl": now + ttl_minutes * 60,
                 },
                 ConditionExpression=cond,
-                **({"ExpressionAttributeNames": names} if names else {}),
-                **({"ExpressionAttributeValues": values} if values else {}),
+                ExpressionAttributeNames=names,
+                ExpressionAttributeValues=values,
             )
             return value
         except ClientError as e:
@@ -388,7 +422,7 @@ async def compare_and_set(
                     ).get("Item")
                     or {}
                 )
-                raw = won.get("data")
+                raw = None if _expired(won) else won.get("data")
                 if raw is None:
                     # The condition failed and yet nothing comparable is stored:
                     # the item vanished (TTL, or an earlier delete/delete_prefix),
@@ -452,6 +486,7 @@ async def list_items(phone: str, prefix: str) -> list[dict]:
 
     Reuses the existing per-pk query so multi-record reads (e.g. all `ad#*`
     items for one user) cost a single DynamoDB call instead of N get_item calls.
+    Like ``get``, it skips an item whose ``ttl`` has passed.
     """
     table = _get_table()
     if table is None:
@@ -471,6 +506,7 @@ async def list_items(phone: str, prefix: str) -> list[dict]:
                 boto3.dynamodb.conditions.Key("pk").eq(phone)
                 & boto3.dynamodb.conditions.Key("sk").begins_with(prefix)
             ),
+            "FilterExpression": _live(),
         }
         while True:
             resp = table.query(**kwargs)

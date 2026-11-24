@@ -197,6 +197,59 @@ class TestScheduleLimits:
             count = scheduler_mod._count_user_schedules("+15551234567")
             assert count == 2
 
+    def test_count_user_schedules_fails_closed_when_listing_errors(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A ListSchedules error refuses the create instead of counting 0."""
+        monkeypatch.setattr(scheduler_mod, "config", self._make_config())
+        mock_client = MagicMock()
+        mock_client.list_schedules.side_effect = RuntimeError("throttled")
+
+        with patch.object(scheduler_mod, "_scheduler_client", return_value=mock_client):
+            with pytest.raises(
+                scheduler_mod.ScheduleLimitExceeded, match="Could not check"
+            ):
+                scheduler_mod._count_user_schedules("+15551234567")
+
+    def test_count_user_schedules_fails_closed_on_a_later_page(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """An error after the first page does not return the partial count."""
+        monkeypatch.setattr(scheduler_mod, "config", self._make_config())
+        mock_client = MagicMock()
+        mock_client.list_schedules.side_effect = [
+            {
+                "Schedules": [{"Name": "test-prefix-15551234567-reminder-abc"}],
+                "NextToken": "page-2",
+            },
+            RuntimeError("throttled"),
+        ]
+
+        with patch.object(scheduler_mod, "_scheduler_client", return_value=mock_client):
+            with pytest.raises(scheduler_mod.ScheduleLimitExceeded):
+                scheduler_mod._count_user_schedules("+15551234567")
+
+    def test_schedule_creates_nothing_when_count_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """schedule() refuses and creates nothing while schedules cannot be listed."""
+        monkeypatch.setattr(scheduler_mod, "config", self._make_config())
+        mock_client = MagicMock()
+        mock_client.list_schedules.side_effect = RuntimeError("throttled")
+
+        with patch.object(scheduler_mod, "_scheduler_client", return_value=mock_client):
+            with pytest.raises(scheduler_mod.ScheduleLimitExceeded):
+                asyncio.run(
+                    scheduler_mod.schedule(
+                        operation="reminder",
+                        phone="+15551234567",
+                        delay_minutes=30,
+                        data={"message": "test"},
+                    )
+                )
+        mock_client.create_schedule.assert_not_called()
+        mock_client.update_schedule.assert_not_called()
+
     def test_dev_mode_bypasses_limit_check(self, monkeypatch: pytest.MonkeyPatch):
         """In dev mode, schedules execute immediately without limit checks."""
         dev_config = self._make_config(notification_lambda_arn="__socialagent_dev__")
