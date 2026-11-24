@@ -19,10 +19,11 @@
 # each lands on exactly one label:
 #   - infra: everything under infra-terraform/, which ships in the wheel and
 #     which the CLI copies into a project when it has no checkout.
-#   - runtime: everything under blueprints/ and recipes/, which ship in the
-#     wheel and which `socialagent init` and `socialagent recipe add` copy into
-#     projects (READMEs, skills and agent instructions included), and PYPI.md,
-#     the published PyPI page.
+#   - runtime: everything under src/ and packages/, which ship in the wheel,
+#     and under blueprints/ and recipes/, which also ship and which
+#     `socialagent init` and `socialagent recipe add` copy into projects
+#     (READMEs, skills and agent instructions included), and PYPI.md, the
+#     published PyPI page.
 #   - console: the admin console's AGENTS.md and CLAUDE.md.
 #   - ci: everything under .github/, every other AGENTS.md and CLAUDE.md, which
 #     instruct the coding agents that work on this repository (CONTRIBUTING.md
@@ -41,7 +42,7 @@ docs-only:
           # is still docs-only.
           - any-glob-to-all-files: "{docs/**,**/*.md,LICENSE,NOTICE}"
           - all-globs-to-all-files:
-              - "!{blueprints,recipes,infra-terraform,.github}/**"
+              - "!{src,packages,blueprints,recipes,infra-terraform,.github}/**"
               - "!**/{AGENTS,CLAUDE}.md"
               - "!PYPI.md"
               - "!{SECURITY.md,docs/threat-model.*,docs/data-flows.md}"
@@ -55,9 +56,9 @@ infra:
 runtime:
   - changed-files:
       - all-globs-to-any-file:
-          - "{src/**,packages/**,blueprints/**,recipes/**,tests/**,pyproject.toml,uv.lock,VERSION}"
+          - "{tests/**,pyproject.toml,uv.lock,VERSION}"
           - "!**/*.md"
-      - any-glob-to-any-file: ["{blueprints,recipes}/**", "PYPI.md"]
+      - any-glob-to-any-file: ["{src,packages,blueprints,recipes}/**", "PYPI.md"]
 
 console:
   - changed-files:
@@ -72,4 +73,4 @@ ci:
       - any-glob-to-any-file: "{.github/**,SECURITY.md,docs/threat-model.*,docs/data-flows.md}"
       - all-globs-to-any-file:
           - "**/{AGENTS,CLAUDE}.md"
-          - "!{blueprints,recipes,socialagent-admin-console}/**"
+          - "!{src,packages,blueprints,recipes,infra-terraform,socialagent-admin-console}/**"

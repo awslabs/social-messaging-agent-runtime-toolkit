@@ -73,7 +73,7 @@ def _globs(entries: list) -> list[str]:
     for entry in entries:
         assert set(entry) <= MATCH_KEYS, entry
         for key, value in entry.items():
-            for group in value if key in ("all", "any") else [{key: value}]:
+            for group in value if key == "all" else [{key: value}]:
                 assert set(group) == {"changed-files"}, group
                 for option in group["changed-files"]:
                     assert set(option) <= CHANGED_FILES_KEYS, option
@@ -89,6 +89,11 @@ def test_labeler_uses_only_options_it_reads():
     # docs-only must hold for every changed file, which only an ``all`` group
     # checks; under ``any`` one Markdown file would label a code change.
     assert [list(entry) for entry in labeler["docs-only"]] == [["all"]]
+    # The port below models only this syntax: no "?", no "[...]", and no
+    # brace without a comma, which minimatch reads literally.
+    for entries in labeler.values():
+        for glob in _globs(entries):
+            assert not re.search(r"[?\[\]]|\{[^,{}]*\}", glob), glob
 
 
 # A port of labeler v7.0.0's matching (get-label-configs.ts, labeler.ts and
@@ -163,7 +168,7 @@ def _labels(files: list[str]) -> set[str]:
 
 
 @pytest.mark.parametrize(
-    "files, labels",
+    ("files", "labels"),
     [
         (["README.md", "docs/media.md"], {"docs-only"}),
         (["docs/assets/architecture.png", "AGENTS.md"], {"ci"}),
@@ -184,7 +189,13 @@ def _labels(files: list[str]) -> set[str]:
         (["docs/data-flows.md"], {"ci"}),
         ([".github/PULL_REQUEST_TEMPLATE.md"], {"ci"}),
         ([".github/workflows/ci.yml", "uv.lock"], {"ci", "runtime"}),
+        (["README.md", "src/socialagent/app.py"], {"runtime"}),
+        (["README.md", "Makefile"], {"ci"}),
+        (["src/socialagent/README.md"], {"runtime"}),
+        (["packages/socialagent-runtime/README.md"], {"runtime"}),
+        (["infra-terraform/AGENTS.md"], {"infra"}),
     ],
+    ids=lambda value: "+".join(sorted(value)),
 )
 def test_boundary_paths_get_their_labels(files, labels):
     assert _labels(files) == labels
@@ -200,25 +211,21 @@ def test_each_tracked_file_alone_gets_one_label():
     assert wrong == {}, "fix these in .github/labeler.yml"
 
 
-def test_no_code_or_configuration_is_docs_only():
-    """docs-only reads as a light review, so nothing a program reads may get it."""
+# What docs-only may hold: Markdown, the diagrams and images under docs/, and
+# the licence files. Anything else a program could read.
+DOCUMENTATION = (".md", ".png", ".svg", ".jpg", ".jpeg", ".gif", ".drawio")
+
+
+def test_docs_only_holds_only_documentation():
+    """docs-only reads as a light review, so it may hold only what no program reads."""
     tracked = subprocess.run(
         ["git", "ls-files"], cwd=ROOT, capture_output=True, check=True, text=True
     ).stdout.splitlines()
-    code = (
-        ".py",
-        ".tf",
-        ".ts",
-        ".tsx",
-        ".js",
-        ".sh",
-        ".yml",
-        ".yaml",
-        ".json",
-        ".toml",
-        ".hcl",
-    )
     light = sorted(
-        p for p in tracked if p.endswith(code) and "docs-only" in _labels([p])
+        path
+        for path in tracked
+        if not path.endswith(DOCUMENTATION)
+        and path not in ("LICENSE", "NOTICE")
+        and "docs-only" in _labels([path])
     )
     assert light == [], "these must not be docs-only"
