@@ -59,8 +59,12 @@ _APPROVED_TEMPLATE_TTL_SECONDS = 300.0
 # How long a template found not APPROVED is refused without checking again.
 # The lookup fails open, so in a burst of sends of a PENDING template (a
 # reminder firing for many users) a throttled listing would let out the very
-# template the check stops; the first refusal covers the rest of the burst.
-# Kept short, as an approval takes effect only once it expires.
+# template the check stops. The refusal lives on the provider, one per Lambda
+# execution environment, and the burst runs as concurrent invocations, so it
+# covers only the later sends that reach the same warm environment: the first
+# send in each new environment lists the templates, and a throttled one there
+# still sends unchecked. Kept short, as an approval takes effect only once it
+# expires.
 _REFUSED_TEMPLATE_TTL_SECONDS = 60.0
 
 # At most this many refusals are kept. An agent can queue a template by any
@@ -249,10 +253,10 @@ class EUMSocialProvider(MessageProvider):
         Raises:
             TemplateNotApprovedError: the WhatsApp Business Account lists the
                 template in ``language`` with a status other than APPROVED, or
-                does not list it. Nothing is sent. A refusal is remembered for
-                60 seconds, so a send in that time is refused without a
-                lookup. Otherwise, when the lookup itself fails, the template
-                is sent unchecked, as before the check.
+                does not list it. Nothing is sent. This provider remembers a
+                refusal for 60 seconds, so a send through it in that time is
+                refused without a lookup. Otherwise, when the lookup itself
+                fails, the template is sent unchecked, as before the check.
         """
         if not to.startswith("+"):
             to = f"+{to}"
@@ -481,9 +485,9 @@ class EUMSocialProvider(MessageProvider):
         APPROVED in ``language``. The listing is read page by page up to the
         template, and a lookup that fails before reaching it lets the send go
         ahead unchecked, so a missing grant or a throttle loses no message that
-        went out before the check existed. A template refused in the last
-        ``_REFUSED_TEMPLATE_TTL_SECONDS`` is refused again without a lookup, so
-        a lookup that fails then cannot let it out."""
+        went out before the check existed. A template this provider refused in
+        the last ``_REFUSED_TEMPLATE_TTL_SECONDS`` is refused again without a
+        lookup, so a lookup that fails then cannot let it out."""
         key = (full_name, language)
         now = time.monotonic()
         if self._approved_until.get(key, 0.0) > now:

@@ -244,7 +244,8 @@ def _throttled() -> ClientError:
 
 
 def test_a_refusal_is_served_without_a_second_lookup(clock, caplog) -> None:
-    """A burst of reminders with a PENDING template lists the templates once."""
+    """Sends of a PENDING template through one provider list the templates
+    once."""
     p, sent = _provider(_template("dev_pa_reminder_clean", "PENDING"))
     with pytest.raises(TemplateNotApprovedError):
         _send(p)
@@ -265,7 +266,8 @@ def test_a_refusal_is_served_without_a_second_lookup(clock, caplog) -> None:
 
 def test_a_throttled_lookup_after_a_refusal_still_refuses(clock) -> None:
     """The lookup fails open, so without the remembered refusal a throttle in
-    the burst would send the template the check exists to stop."""
+    a later send through the same provider would send the template the check
+    exists to stop."""
     p, sent = _provider()
     p._client.list_whatsapp_message_templates.side_effect = [
         {"templates": [_template("dev_pa_reminder_clean", "PENDING")]},
@@ -277,6 +279,52 @@ def test_a_throttled_lookup_after_a_refusal_still_refuses(clock) -> None:
     with pytest.raises(TemplateNotApprovedError, match="is PENDING"):
         _send(p)
     assert sent == []
+
+
+def test_a_refusal_reaches_only_sends_through_the_same_provider(clock) -> None:
+    """Each Lambda execution environment builds its own provider, and a burst
+    of reminders runs as concurrent invocations, so two providers stand in for
+    a warm environment and a new one. The new one looks the template up, and a
+    throttle there sends it unchecked, as the docs say. Moving the refusal off
+    the provider changes this test, and the docs must then say how far it
+    reaches."""
+
+    def environment() -> tuple[EUMSocialProvider, list[dict]]:
+        p = EUMSocialProvider(
+            "phone-number-id-1", template_prefix="dev_pa_", message_gap_seconds=0
+        )
+        p._client = MagicMock()
+        p._lookup_client = MagicMock()
+        p._lookup_client.get_linked_whatsapp_business_account_phone_number.return_value = {
+            "linkedWhatsAppBusinessAccountId": "waba-1"
+        }
+        sent: list[dict] = []
+
+        def _send_raw(payload: dict) -> str:
+            sent.append(payload)
+            return f"msg-{len(sent)}"
+
+        p._send_raw = _send_raw
+        return p, sent
+
+    warm, warm_sent = environment()
+    warm._lookup_client.list_whatsapp_message_templates.return_value = {
+        "templates": [_template("dev_pa_reminder_clean", "PENDING")]
+    }
+    with pytest.raises(TemplateNotApprovedError):
+        _send(warm)
+    clock[0] += 1
+    new, new_sent = environment()
+    new._lookup_client.list_whatsapp_message_templates.side_effect = _throttled()
+    assert _send(new) == "msg-1"
+    assert new._lookup_client.list_whatsapp_message_templates.call_count == 1
+    assert len(new_sent) == 1
+    # The warm environment still refuses, with no second lookup to throttle.
+    warm._lookup_client.list_whatsapp_message_templates.side_effect = _throttled()
+    with pytest.raises(TemplateNotApprovedError, match="is PENDING"):
+        _send(warm)
+    assert warm._lookup_client.list_whatsapp_message_templates.call_count == 1
+    assert warm_sent == []
 
 
 def test_a_refusal_expires_so_an_approval_takes_effect(clock) -> None:
