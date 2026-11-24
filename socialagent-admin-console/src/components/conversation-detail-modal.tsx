@@ -239,7 +239,7 @@ function ConversationViewer({ visible, onDismiss, stackId, phoneHash, fullPhone,
       setSending(true);
       try {
         await api.sendTemplateMessage(stackId, fullPhone, selectedTpl, tplDetail?.language || "en", tplParams);
-        const body = tplDetail?.components.find((c) => c.type === "BODY")?.text;
+        const body = tplDetail?.name === selectedTpl ? tplDetail.components.find((c) => c.type === "BODY")?.text : undefined;
         const sentBody = body ? fillTemplate(body, tplParams) : undefined;
         setAllMessages((prev) => [...prev, { role: "assistant", content: `[Template: ${selectedTpl}]`, timestamp: new Date().toISOString(), sentBody }]);
         setSelectedTpl("");

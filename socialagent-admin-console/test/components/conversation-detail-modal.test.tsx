@@ -268,6 +268,28 @@ describe("ConversationDetailModal reply composer", () => {
     expect(screen.queryByText(/template body not fetched/)).not.toBeInTheDocument();
   });
 
+  it("does not label a sent template with the previous template's body", async () => {
+    // Sending before the newly picked template's detail arrives must not reuse
+    // the detail of the template picked before it.
+    vi.mocked(api.getConversationMessages).mockResolvedValue(userMessages("Hi"));
+    vi.mocked(api.getTemplates).mockResolvedValue([listed("dev_bot_order", "bot-dev"), listed("dev_bot_hello", "bot-dev")]);
+    vi.mocked(api.getTemplateDetail).mockImplementation((_stackId, name) =>
+      name === "dev_bot_order" ? Promise.resolve(template("dev_bot_order", "Your order shipped")) : new Promise(() => {}));
+    render(viewer("bot-dev"));
+    fireEvent.click(await screen.findByRole("button", { name: "Template" }));
+    await screen.findByRole("option", { name: "dev_bot_order (UTILITY)" });
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "dev_bot_order" } });
+    await screen.findByText("Your order shipped");
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "dev_bot_hello" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send template" }));
+
+    await screen.findByText("2 messages");
+    const [badge] = templateBadges();
+    const row = badge.parentElement!.parentElement!;
+    expect(row).toHaveTextContent("dev_bot_hello");
+    expect(row).not.toHaveTextContent("Your order shipped");
+  });
+
   it("starts with an empty draft in another conversation", async () => {
     vi.mocked(api.getConversationMessages).mockResolvedValue(userMessages("Hi"));
     const { rerender } = render(viewer("bot-dev"));
