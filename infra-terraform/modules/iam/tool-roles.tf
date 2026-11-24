@@ -44,12 +44,18 @@ resource "aws_iam_role_policy" "notification_service" {
         Resource = "arn:aws:social-messaging:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:phone-number-id/*"
       }],
       # A template send first checks that Meta approved the template (see the
-      # webhook role's EUMSocialTemplateStatus in main.tf).
+      # webhook role's EUMSocialTemplateStatus* statements in main.tf).
       [{
-        Sid      = "EUMSocialTemplateStatus"
+        Sid      = "EUMSocialTemplateStatusPhoneNumber"
         Effect   = "Allow"
-        Action   = ["social-messaging:GetLinkedWhatsAppBusinessAccountPhoneNumber", "social-messaging:ListWhatsAppMessageTemplates"]
-        Resource = ["arn:aws:social-messaging:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:phone-number-id/*", "arn:aws:social-messaging:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:waba/*"]
+        Action   = ["social-messaging:GetLinkedWhatsAppBusinessAccountPhoneNumber"]
+        Resource = "arn:aws:social-messaging:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:phone-number-id/*"
+      }],
+      [{
+        Sid      = "EUMSocialTemplateStatusWaba"
+        Effect   = "Allow"
+        Action   = ["social-messaging:ListWhatsAppMessageTemplates"]
+        Resource = "arn:aws:social-messaging:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:waba/*"
       }],
       # notify.upload_media (voice replies, generated images) runs here: upload
       # an object from this stack's media prefix to WhatsApp.
@@ -169,12 +175,19 @@ resource "aws_iam_role_policy" "event_handler" {
         Resource = "arn:aws:social-messaging:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:phone-number-id/*"
       }],
       # EventContext.send_template first checks that Meta approved the
-      # template (see the webhook role's EUMSocialTemplateStatus in main.tf).
+      # template (see the webhook role's EUMSocialTemplateStatus* statements in
+      # main.tf).
       [{
-        Sid      = "EUMSocialTemplateStatus"
+        Sid      = "EUMSocialTemplateStatusPhoneNumber"
         Effect   = "Allow"
-        Action   = ["social-messaging:GetLinkedWhatsAppBusinessAccountPhoneNumber", "social-messaging:ListWhatsAppMessageTemplates"]
-        Resource = ["arn:aws:social-messaging:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:phone-number-id/*", "arn:aws:social-messaging:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:waba/*"]
+        Action   = ["social-messaging:GetLinkedWhatsAppBusinessAccountPhoneNumber"]
+        Resource = "arn:aws:social-messaging:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:phone-number-id/*"
+      }],
+      [{
+        Sid      = "EUMSocialTemplateStatusWaba"
+        Effect   = "Allow"
+        Action   = ["social-messaging:ListWhatsAppMessageTemplates"]
+        Resource = "arn:aws:social-messaging:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:waba/*"
       }],
       # Shared by the event and scheduler Lambdas (EventContext.schedule). The
       # SDK upserts: it calls UpdateSchedule when CreateSchedule finds the name

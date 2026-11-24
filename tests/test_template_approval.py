@@ -369,10 +369,28 @@ def test_other_statuses_log_nothing(caplog, status: str) -> None:
 
 
 IAM = REPO_ROOT / "infra-terraform" / "modules" / "iam"
+# The roles that send WhatsApp messages, and so templates.
+_SENDERS = ["lambda_custom", "notification_service", "event_handler"]
 _STATUS_ACTIONS = {
     "social-messaging:GetLinkedWhatsAppBusinessAccountPhoneNumber",
     "social-messaging:ListWhatsAppMessageTemplates",
 }
+# The one resource type each social-messaging action the module grants is
+# authorized on, from the Service Authorization Reference for AWS End User
+# Messaging Social. A statement on another type grants nothing there, and one
+# that mixes actions of both types grants each on a type it does not need.
+_RESOURCE_TYPE = {
+    "social-messaging:SendWhatsAppMessage": "phone-number-id",
+    "social-messaging:GetWhatsAppMessageMedia": "phone-number-id",
+    "social-messaging:PostWhatsAppMessageMedia": "phone-number-id",
+    "social-messaging:GetLinkedWhatsAppBusinessAccountPhoneNumber": "phone-number-id",
+    "social-messaging:ListWhatsAppMessageTemplates": "waba",
+}
+# Every social-messaging grant stays in the stack's own account and Region.
+_ARN_SCOPE = (
+    "arn:aws:social-messaging:${data.aws_region.current.id}:"
+    "${data.aws_caller_identity.current.account_id}:"
+)
 
 
 def _role_policies() -> dict[str, str]:
@@ -388,16 +406,110 @@ def _role_policies() -> dict[str, str]:
     return policies
 
 
+def _statements(policy: str) -> dict[str, str]:
+    """Each statement of *policy* with a Sid, by Sid, braces included.
+
+    Braces inside string literals (``${...}`` interpolations) are skipped.
+    """
+    statements: dict[str, str] = {}
+    for match in re.finditer(r'Sid\s*=\s*"(\w+)"', policy):
+        open_at = policy.rindex("{", 0, match.start())
+        depth, in_string = 0, False
+        for i in range(open_at, len(policy)):
+            c = policy[i]
+            if c == '"' and policy[i - 1] != "\\":
+                in_string = not in_string
+            elif not in_string and c in "{}":
+                depth += 1 if c == "{" else -1
+                if depth == 0:
+                    statements[match.group(1)] = policy[open_at : i + 1]
+                    break
+    return statements
+
+
+def _misplaced_grants(policy: str) -> list[str]:
+    """Every social-messaging action in *policy* granted on a resource that is
+    not of its own type, or not in the stack's account and Region."""
+    statements = _statements(policy)
+    problems: list[str] = []
+    in_statements = sum(
+        len(re.findall(r'"social-messaging:\w+"', s)) for s in statements.values()
+    )
+    if in_statements != len(re.findall(r'"social-messaging:\w+"', policy)):
+        problems.append("a social-messaging action outside a statement with a Sid")
+    for sid, statement in statements.items():
+        actions = re.findall(r'"(social-messaging:\w+)"', statement)
+        resources = re.findall(r'"(arn:[^"]*)"', statement)
+        if actions and not resources:
+            problems.append(f"{sid}: no literal resource to check")
+        for action in actions:
+            wanted = _RESOURCE_TYPE.get(action)
+            if wanted is None:
+                problems.append(f"{sid}: {action} has no resource type in this test")
+            for arn in resources:
+                if not arn.startswith(f"{_ARN_SCOPE}{wanted}/"):
+                    problems.append(f"{sid}: {action} on {arn}")
+    return problems
+
+
 def test_every_role_that_sends_whatsapp_messages_can_check_a_template() -> None:
     senders = {
         name: body
         for name, body in _role_policies().items()
         if "social-messaging:SendWhatsAppMessage" in body
     }
-    assert set(senders) == {"lambda_custom", "notification_service", "event_handler"}
+    assert set(senders) == set(_SENDERS)
     for name, body in senders.items():
-        sid = re.search(r'Sid\s*=\s*"EUMSocialTemplateStatus".*?\}\]', body, re.DOTALL)
-        assert sid, f"{name} sends but cannot check a template's status"
-        actions = set(re.findall(r'"(social-messaging:\w+)"', sid.group(0)))
-        assert actions == _STATUS_ACTIONS, f"{name}: {sorted(actions)}"
-        assert ":waba/*" in sid.group(0) and ":phone-number-id/*" in sid.group(0)
+        granted = set(re.findall(r'"(social-messaging:\w+)"', body))
+        assert _STATUS_ACTIONS <= granted, f"{name} sends but cannot check a template"
+
+
+def test_each_social_messaging_action_is_granted_on_its_own_resource_type() -> None:
+    """GetLinkedWhatsAppBusinessAccountPhoneNumber is authorized on
+    phone-number-id only and ListWhatsAppMessageTemplates on waba only, so
+    each is a statement of its own on that type."""
+    policies = _role_policies()
+    assert {n for n, body in policies.items() if "social-messaging:" in body} == set(
+        _SENDERS
+    )
+    for name, body in policies.items():
+        assert _misplaced_grants(body) == [], name
+
+
+@pytest.mark.parametrize("role", _SENDERS)
+@pytest.mark.parametrize(
+    ("sid", "right", "wrong"),
+    [
+        ("EUMSocialTemplateStatusPhoneNumber", ":phone-number-id/*", ":waba/*"),
+        ("EUMSocialTemplateStatusWaba", ":waba/*", ":phone-number-id/*"),
+    ],
+)
+def test_a_status_action_moved_to_the_other_resource_type_is_caught(
+    role: str, sid: str, right: str, wrong: str
+) -> None:
+    """The check above reads the real statements, so it is not vacuous."""
+    body = _role_policies()[role]
+    statement = _statements(body)[sid]
+    assert right in statement
+    moved = body.replace(statement, statement.replace(right, wrong))
+    assert any(problem.startswith(f"{sid}: ") for problem in _misplaced_grants(moved))
+
+
+@pytest.mark.parametrize("role", _SENDERS)
+def test_one_statement_for_both_status_actions_is_caught(role: str) -> None:
+    """The grant was first one statement with both actions on both types."""
+    body = _role_policies()[role]
+    statements = _statements(body)
+    merged = (
+        '{ Sid = "EUMSocialTemplateStatus", Effect = "Allow", Action = ['
+        + ", ".join(f'"{a}"' for a in sorted(_STATUS_ACTIONS))
+        + f'], Resource = ["{_ARN_SCOPE}phone-number-id/*", "{_ARN_SCOPE}waba/*"] }}'
+    )
+    body = body.replace(statements["EUMSocialTemplateStatusPhoneNumber"], merged)
+    body = body.replace(statements["EUMSocialTemplateStatusWaba"], "")
+    assert sorted(_misplaced_grants(body)) == [
+        "EUMSocialTemplateStatus: social-messaging:GetLinkedWhatsAppBusinessAccountPhoneNumber"
+        f" on {_ARN_SCOPE}waba/*",
+        "EUMSocialTemplateStatus: social-messaging:ListWhatsAppMessageTemplates"
+        f" on {_ARN_SCOPE}phone-number-id/*",
+    ]
