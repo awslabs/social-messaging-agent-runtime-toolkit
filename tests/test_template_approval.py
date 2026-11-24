@@ -264,10 +264,11 @@ def test_a_refusal_is_served_without_a_second_lookup(clock, caplog) -> None:
     )
 
 
-def test_a_throttled_lookup_after_a_refusal_still_refuses(clock) -> None:
-    """The lookup fails open, so without the remembered refusal a throttle in
-    a later send through the same provider would send the template the check
-    exists to stop."""
+def test_a_refusal_leaves_no_lookup_for_a_throttle_to_fail_open(clock) -> None:
+    """The lookup fails open, so a throttled lookup would send the template
+    the check exists to stop. A later send through the same provider within
+    the refusal's 60 seconds makes no lookup at all, so the throttle waiting
+    for a second listing call is never reached."""
     p, sent = _provider()
     p._client.list_whatsapp_message_templates.side_effect = [
         {"templates": [_template("dev_pa_reminder_clean", "PENDING")]},
@@ -278,6 +279,7 @@ def test_a_throttled_lookup_after_a_refusal_still_refuses(clock) -> None:
     clock[0] += 1
     with pytest.raises(TemplateNotApprovedError, match="is PENDING"):
         _send(p)
+    assert p._client.list_whatsapp_message_templates.call_count == 1
     assert sent == []
 
 
