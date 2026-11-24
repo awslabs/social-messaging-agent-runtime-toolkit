@@ -14,9 +14,11 @@ import functools
 import json
 import logging
 import re
+import threading
 import time
 import urllib.parse
 import urllib.request
+from typing import NoReturn
 
 import boto3
 from botocore.config import Config
@@ -51,9 +53,19 @@ class MediaTooLarge(RuntimeError):
 
 # How long a template found APPROVED is sent without checking again. Meta can
 # pause an approved template, so the answer is not kept for the container's
-# life; one that is not approved is checked on every send, so its approval
-# takes effect on the next one.
+# life.
 _APPROVED_TEMPLATE_TTL_SECONDS = 300.0
+
+# How long a template found not APPROVED is refused without checking again.
+# The lookup fails open, so in a burst of sends of a PENDING template (a
+# reminder firing for many users) a throttled listing would let out the very
+# template the check stops; the first refusal covers the rest of the burst.
+# Kept short, as an approval takes effect only once it expires.
+_REFUSED_TEMPLATE_TTL_SECONDS = 60.0
+
+# At most this many refusals are kept. An agent can queue a template by any
+# name, and each name the WABA does not list is a refusal of its own.
+_REFUSED_TEMPLATE_MAX_ENTRIES = 256
 
 # The approval lookup runs before a send, often with little of the Lambda's
 # time left (the webhook's reply follows a long agent turn), so it gets two
@@ -104,9 +116,17 @@ class EUMSocialProvider(MessageProvider):
             "socialmessaging", region_name=region, config=_LOOKUP_CONFIG
         )
         self._waba_id: str = ""  # lazy-loaded on the first template sync or send
-        # (full template name, language) -> time.monotonic() until which the
-        # template counts as approved without a lookup.
+        # Both template caches are keyed by (full template name, language): the
+        # provider sends from one number, so from one WABA, and the full name
+        # carries the stack's prefix.
+        # The time.monotonic() until which the template counts as approved
+        # without a lookup.
         self._approved_until: dict[tuple[str, str], float] = {}
+        # The time.monotonic() until which the template is refused without a
+        # lookup, and the status that refused it. Insertion order is expiry
+        # order, as every refusal is kept as long.
+        self._refused_until: dict[tuple[str, str], tuple[float, str]] = {}
+        self._refused_lock = threading.Lock()
 
     # ── Inbound ───────────────────────────────────────────────────────────────
 
@@ -229,8 +249,10 @@ class EUMSocialProvider(MessageProvider):
         Raises:
             TemplateNotApprovedError: the WhatsApp Business Account lists the
                 template in ``language`` with a status other than APPROVED, or
-                does not list it. Nothing is sent. When the lookup itself
-                fails, the template is sent unchecked, as before the check.
+                does not list it. Nothing is sent. A refusal is remembered for
+                60 seconds, so a send in that time is refused without a
+                lookup. Otherwise, when the lookup itself fails, the template
+                is sent unchecked, as before the check.
         """
         if not to.startswith("+"):
             to = f"+{to}"
@@ -459,10 +481,16 @@ class EUMSocialProvider(MessageProvider):
         APPROVED in ``language``. The listing is read page by page up to the
         template, and a lookup that fails before reaching it lets the send go
         ahead unchecked, so a missing grant or a throttle loses no message that
-        went out before the check existed."""
+        went out before the check existed. A template refused in the last
+        ``_REFUSED_TEMPLATE_TTL_SECONDS`` is refused again without a lookup, so
+        a lookup that fails then cannot let it out."""
         key = (full_name, language)
-        if self._approved_until.get(key, 0.0) > time.monotonic():
+        now = time.monotonic()
+        if self._approved_until.get(key, 0.0) > now:
             return
+        refused = self._refused_until.get(key)
+        if refused and refused[0] > now:
+            self._refuse(full_name, language, refused[1])
         status: str | None = None
         try:
             if not self._waba_id:
@@ -494,12 +522,33 @@ class EUMSocialProvider(MessageProvider):
             )
             return
         if status != "APPROVED":
-            error = TemplateNotApprovedError(full_name, language, status or "")
-            # Every caller sees the refusal in the log, including one that
-            # falls back without logging it.
-            logger.warning("%s: not sending it", error)
-            raise error
+            self._remember_refusal(key, status or "")
+            self._refuse(full_name, language, status or "")
         self._approved_until[key] = time.monotonic() + _APPROVED_TEMPLATE_TTL_SECONDS
+
+    def _remember_refusal(self, key: tuple[str, str], status: str) -> None:
+        """Refuse *key* without a lookup for ``_REFUSED_TEMPLATE_TTL_SECONDS``,
+        keeping at most ``_REFUSED_TEMPLATE_MAX_ENTRIES`` refusals."""
+        now = time.monotonic()
+        # The lock keeps a send in another thread from changing the dict while
+        # this one drops entries from its front.
+        with self._refused_lock:
+            refused = self._refused_until
+            refused.pop(key, None)
+            while refused and (
+                next(iter(refused.values()))[0] <= now
+                or len(refused) >= _REFUSED_TEMPLATE_MAX_ENTRIES
+            ):
+                del refused[next(iter(refused))]
+            refused[key] = (now + _REFUSED_TEMPLATE_TTL_SECONDS, status)
+
+    @staticmethod
+    def _refuse(full_name: str, language: str, status: str) -> NoReturn:
+        error = TemplateNotApprovedError(full_name, language, status)
+        # Every caller sees the refusal in the log, including one that falls
+        # back without logging it.
+        logger.warning("%s: not sending it", error)
+        raise error
 
     async def register_template(self, template: dict, prefix: str = "") -> None:
         """Create or update a template with the WABA.

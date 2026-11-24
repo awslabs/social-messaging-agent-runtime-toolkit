@@ -17,6 +17,7 @@ import asyncio
 import importlib.util
 import logging
 import re
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -55,6 +56,8 @@ def _provider(
     p._template_prefix = prefix
     p._waba_id = ""
     p._approved_until = {}
+    p._refused_until = {}
+    p._refused_lock = threading.Lock()
     p._message_gap_seconds = 0
     p._client = MagicMock()
     p._lookup_client = p._client
@@ -222,7 +225,60 @@ def test_an_approved_template_is_not_looked_up_on_every_send(monkeypatch) -> Non
     assert len(sent) == 3
 
 
-def test_a_template_approved_after_a_refusal_goes_out_on_the_next_send() -> None:
+# ── A refusal is remembered for a short while ────────────────────────────────
+
+
+@pytest.fixture
+def clock(monkeypatch) -> list[float]:
+    now = [1000.0]
+    monkeypatch.setattr(eum.time, "monotonic", lambda: now[0])
+    return now
+
+
+def _throttled() -> ClientError:
+    return ClientError(
+        {"Error": {"Code": "ThrottledRequestException", "Message": "slow"}},
+        "ListWhatsAppMessageTemplates",
+    )
+
+
+def test_a_refusal_is_served_without_a_second_lookup(clock, caplog) -> None:
+    """A burst of reminders with a PENDING template lists the templates once."""
+    p, sent = _provider(_template("dev_pa_reminder_clean", "PENDING"))
+    with pytest.raises(TemplateNotApprovedError):
+        _send(p)
+    clock[0] += eum._REFUSED_TEMPLATE_TTL_SECONDS - 1
+    with (
+        caplog.at_level(logging.WARNING, logger=eum.logger.name),
+        pytest.raises(TemplateNotApprovedError, match="is PENDING") as caught,
+    ):
+        _send(p)
+    assert caught.value.status == "PENDING"
+    assert p._client.list_whatsapp_message_templates.call_count == 1
+    assert sent == []
+    # Each refused send still leaves its line, as the caller may not log it.
+    assert "dev_pa_reminder_clean (es_MX) is PENDING, not APPROVED: not sending it" in (
+        caplog.text
+    )
+
+
+def test_a_throttled_lookup_after_a_refusal_still_refuses(clock) -> None:
+    """The lookup fails open, so without the remembered refusal a throttle in
+    the burst would send the template the check exists to stop."""
+    p, sent = _provider()
+    p._client.list_whatsapp_message_templates.side_effect = [
+        {"templates": [_template("dev_pa_reminder_clean", "PENDING")]},
+        _throttled(),
+    ]
+    with pytest.raises(TemplateNotApprovedError):
+        _send(p)
+    clock[0] += 1
+    with pytest.raises(TemplateNotApprovedError, match="is PENDING"):
+        _send(p)
+    assert sent == []
+
+
+def test_a_refusal_expires_so_an_approval_takes_effect(clock) -> None:
     p, sent = _provider()
     p._client.list_whatsapp_message_templates.side_effect = [
         {"templates": [_template("dev_pa_reminder_clean", "PENDING")]},
@@ -230,8 +286,72 @@ def test_a_template_approved_after_a_refusal_goes_out_on_the_next_send() -> None
     ]
     with pytest.raises(TemplateNotApprovedError):
         _send(p)
-    _send(p)
-    assert len(sent) == 1
+    clock[0] += eum._REFUSED_TEMPLATE_TTL_SECONDS - 1
+    with pytest.raises(TemplateNotApprovedError):
+        _send(p)
+    clock[0] += 2
+    assert _send(p) == "msg-1"
+    assert p._client.list_whatsapp_message_templates.call_count == 2
+
+
+def test_a_refusal_does_not_refuse_an_approved_template(clock) -> None:
+    """A refusal is per template name and language, so the burst refuses only
+    the template that is not approved."""
+    p, sent = _provider(
+        _template("dev_pa_reminder_clean", "PENDING"),
+        _template("dev_pa_reminder_clean", "APPROVED", language="en"),
+        _template("dev_pa_task_completed", "APPROVED"),
+    )
+    with pytest.raises(TemplateNotApprovedError):
+        _send(p)
+    _send(p, language="en")
+    _send(p, name="task_completed")
+    with pytest.raises(TemplateNotApprovedError):
+        _send(p)
+    _send(p, language="en")
+    assert [
+        (s["template"]["name"], s["template"]["language"]["code"]) for s in sent
+    ] == [
+        ("dev_pa_reminder_clean", "en"),
+        ("dev_pa_task_completed", "es_MX"),
+        ("dev_pa_reminder_clean", "en"),
+    ]
+    # One lookup each: the refusal and both approvals are remembered.
+    assert p._client.list_whatsapp_message_templates.call_count == 3
+
+
+def test_the_remembered_refusals_are_bounded(clock, monkeypatch) -> None:
+    """An agent can queue any template name, and each one the WABA does not
+    list is a refusal of its own: expired refusals are dropped, then the
+    oldest while the cache is full."""
+    monkeypatch.setattr(eum, "_REFUSED_TEMPLATE_MAX_ENTRIES", 3)
+    p, _ = _provider()
+
+    def refuse(name: str) -> None:
+        with pytest.raises(TemplateNotApprovedError):
+            _send(p, name=name)
+
+    def remembered() -> list[str]:
+        return [name.removeprefix("dev_pa_") for name, _ in p._refused_until]
+
+    for name in ("a", "b", "c", "d"):
+        refuse(name)
+    # Full, so "d" pushed out the oldest, "a", which is looked up again.
+    assert remembered() == ["b", "c", "d"]
+    lookups = p._client.list_whatsapp_message_templates.call_count
+    refuse("d")
+    assert p._client.list_whatsapp_message_templates.call_count == lookups
+    refuse("a")
+    assert p._client.list_whatsapp_message_templates.call_count == lookups + 1
+    clock[0] += eum._REFUSED_TEMPLATE_TTL_SECONDS + 1
+    refuse("e")
+    assert remembered() == ["e"]
+    clock[0] += eum._REFUSED_TEMPLATE_TTL_SECONDS / 2
+    refuse("f")
+    clock[0] += eum._REFUSED_TEMPLATE_TTL_SECONDS / 2 + 1
+    refuse("g")
+    # "e" had expired and "f" had not, with room left for both.
+    assert remembered() == ["f", "g"]
 
 
 # ── personal-assistant's reminder, end to end ────────────────────────────────
