@@ -25,7 +25,7 @@ from socialagent.constants import (
     SOCIALAGENT_VERSION,
     DEFAULT_ERRORS,
 )
-from socialagent.handlers.common import gap_seconds, text_chunks
+from socialagent.handlers.common import gap_seconds, run_handler, text_chunks
 from socialagent.handlers.runtime_call import call_runtime, invoke_runtime
 from socialagent.media.transcriber import transcribe_audio
 from socialagent.media.attachments import stage_attachment
@@ -794,6 +794,6 @@ def make_webhook_handler(
         return {"statusCode": 200, "body": "ok"}
 
     def sync_handler(event: dict, _context: object = None) -> dict:
-        return asyncio.run(handler(event, _context))
+        return run_handler(handler(event, _context))
 
     return sync_handler

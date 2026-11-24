@@ -14,6 +14,7 @@ its sweep, keeps an item whose ``ttl`` is in the past.
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 import sys
 import time
 from pathlib import Path
@@ -282,3 +283,84 @@ async def test_delete_prefix_still_deletes_an_expired_item(table, agent):
     assert await agent.delete_prefix(PHONE, "photo#") == 2
 
     assert "Item" not in table.get_item(Key={"pk": PHONE, "sk": "photo#2"})
+
+
+# ── only a number counts as a ttl (#218) ──────────────────────────────────────
+# DynamoDB's TTL deletes an item only when its ttl attribute is a Number, so an
+# item whose ttl is a String or a Boolean is never swept. It must read as live
+# everywhere, not raise in get or vanish from the lists.
+
+
+@pytest.mark.parametrize("module", [agent_state, "socialagent.state.table"])
+@pytest.mark.parametrize(
+    "ttl, expired",
+    [
+        ("123", False),
+        (True, False),
+        (False, False),
+        (Decimal(999), True),
+        (999.5, True),
+        (Decimal(1001), False),
+    ],
+    ids=["string", "true", "false", "decimal-past", "float-past", "decimal-live"],
+)
+def test_only_a_numeric_ttl_can_expire(module, ttl, expired):
+    import importlib
+
+    mod = importlib.import_module(module) if isinstance(module, str) else module
+    with patch.object(mod.time, "time", return_value=1000.7):
+        assert mod._expired({"ttl": ttl}) is expired
+
+
+def _store_with_ttl(table, sk: str, ttl) -> None:
+    table.put_item(Item={"pk": PHONE, "sk": sk, "data": json.dumps("v"), "ttl": ttl})
+
+
+@pytest.mark.parametrize("ttl", ["1", True], ids=["string", "boolean"])
+async def test_an_item_with_a_non_numeric_ttl_reads_as_live(
+    table, agent, lambda_state, ttl
+):
+    _store_with_ttl(table, "k", ttl)
+    assert await agent.get(PHONE, "k") == "v"
+    assert await lambda_state.get(PHONE, "k") == "v"
+
+
+@pytest.mark.parametrize("ttl", ["1", True], ids=["string", "boolean"])
+async def test_the_lists_keep_an_item_with_a_non_numeric_ttl(table, agent, ttl):
+    table.put_item(
+        Item={"pk": PHONE, "sk": "photo#1", "data": json.dumps({"n": 1}), "ttl": ttl}
+    )
+    assert await agent.list_keys(PHONE) == ["photo#1"]
+    assert await agent.list_items(PHONE, "photo#") == [{"n": 1}]
+
+
+@pytest.mark.parametrize("ttl", ["1", True], ids=["string", "boolean"])
+async def test_cas_matches_a_value_with_a_non_numeric_ttl(table, agent, ttl):
+    """``get`` returns the value, so ``expected`` must match it."""
+    _store_with_ttl(table, "k", ttl)
+    assert await agent.compare_and_set(PHONE, "k", "v", lambda: "new") == "new"
+
+
+@pytest.mark.parametrize("ttl", ["1", True], ids=["string", "boolean"])
+async def test_a_marker_with_a_non_numeric_ttl_still_refuses(
+    table, agent, lambda_state, ttl
+):
+    """A marker that never expires keeps refusing, on both layers."""
+    _store_with_ttl(table, "claim#evt", ttl)
+    assert await agent.claim_once(PHONE, "evt") is False
+    assert await lambda_state.claim_once(PHONE, "evt") is False
+
+
+@pytest.mark.parametrize("ttl", ["1", True], ids=["string", "boolean"])
+async def test_cas_expected_none_keeps_a_value_with_a_non_numeric_ttl(
+    table, agent, ttl
+):
+    """The condition refuses, and the re-read reports the stored value as live:
+    nothing is written and the item stays as it was."""
+    _store_with_ttl(table, "k", ttl)
+
+    assert await agent.compare_and_set(PHONE, "k", None, lambda: "new") == "v"
+
+    stored = _stored(table, "k")
+    assert json.loads(stored["data"]) == "v"
+    assert stored["ttl"] == ttl

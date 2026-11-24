@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from decimal import Decimal
 import time
 from typing import Any
 
@@ -36,10 +37,15 @@ def _expired(item: dict) -> bool:
     """Whether a stored item's ``ttl`` has passed.
 
     DynamoDB deletes expired items in the background, so one can still be
-    returned for days. An item with no ``ttl`` never expires.
+    returned for days. Its TTL acts only on a Number, so an item with no
+    ``ttl``, or one that is not a number (a String, a Boolean), never expires.
     """
     ttl = item.get("ttl")
-    return ttl is not None and ttl < int(time.time())
+    return (
+        isinstance(ttl, (int, float, Decimal))
+        and not isinstance(ttl, bool)
+        and ttl < int(time.time())
+    )
 
 
 class SocialAgentState:
@@ -188,9 +194,11 @@ class SocialAgentState:
                         "data": json.dumps(now),
                         "ttl": now + ttl_minutes * 60,
                     },
-                    ConditionExpression="attribute_not_exists(sk) OR #ttl < :now",
+                    ConditionExpression=(
+                        "attribute_not_exists(sk) OR (attribute_type(#ttl, :n) AND #ttl < :now)"
+                    ),
                     ExpressionAttributeNames={"#ttl": "ttl"},
-                    ExpressionAttributeValues={":now": now},
+                    ExpressionAttributeValues={":now": now, ":n": "N"},
                 )
             except ClientError as exc:
                 if (
