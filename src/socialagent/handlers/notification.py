@@ -28,7 +28,6 @@ async retries, and the console's, invoked with ``RequestResponse``, get none.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
@@ -36,7 +35,7 @@ from functools import partial
 
 from socialagent.config import SocialAgentConfig
 from socialagent.constants import OUTBOUND_GAP_SECONDS
-from socialagent.handlers.common import log_delivered, send_and_log
+from socialagent.handlers.common import log_delivered, run_handler, send_and_log
 from socialagent.handlers.scheduled import (
     Delivery,
     FiringRecord,
@@ -313,6 +312,6 @@ def make_notification_handler(
         return {"statusCode": 200, "body": "ok"}
 
     def sync_handler(event: dict, _context: object = None) -> dict:
-        return asyncio.run(handler(event, _context))
+        return run_handler(handler(event, _context))
 
     return sync_handler
