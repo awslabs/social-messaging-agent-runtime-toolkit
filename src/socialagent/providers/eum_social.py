@@ -485,10 +485,11 @@ class EUMSocialProvider(MessageProvider):
         APPROVED in ``language``. The listing is read page by page up to the
         template, and a lookup that fails before reaching it lets the send go
         ahead unchecked, so a missing grant or a throttle loses no message that
-        went out before the check existed. A template this provider (one per
-        Lambda execution environment) refused in the last
-        ``_REFUSED_TEMPLATE_TTL_SECONDS`` is refused again from the remembered
-        refusal, with no lookup, so a throttle in that time cannot let it out."""
+        went out before the check existed. Once a lookup by this provider (one
+        per Lambda execution environment) finds the template not APPROVED, it
+        is refused from that result, with no lookup, for
+        ``_REFUSED_TEMPLATE_TTL_SECONDS`` after that lookup, so a throttle in
+        that time cannot let it out."""
         key = (full_name, language)
         now = time.monotonic()
         if self._approved_until.get(key, 0.0) > now:
