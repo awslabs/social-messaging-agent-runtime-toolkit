@@ -124,8 +124,9 @@ def test_approval_is_per_language() -> None:
 
 
 def test_a_template_another_stack_prefixes_alike_is_not_taken_for_this_one() -> None:
-    """The listing is filtered by prefix, so a longer name sharing it is
-    returned too; only the exact name counts."""
+    """ListWhatsAppMessageTemplates has no name filter: it lists every
+    template on the WABA, which other stacks can share, so a longer name that
+    starts with this one is listed too; only the exact name counts."""
     p, sent = _provider(_template("dev_pa_reminder_clean_v2", "APPROVED"))
     with pytest.raises(TemplateNotApprovedError):
         _send(p)
