@@ -82,3 +82,18 @@ def test_a_label_that_opens_with_a_long_code_span_is_not_empty():
     assert label.startswith("`socialagent")
     assert label.endswith("`…")
     assert label.count("`") == 2
+
+
+def test_every_release_in_the_tables_gets_its_own_line_in_calver_order():
+    """A release the script has never seen is not filed under Later, and 2026.9 sorts before 2026.10."""
+    table = (
+        "| Story | Release | Status | Gate | Issue |\n"
+        "|---|---|---|---|---|\n"
+        "| A | 2027.1 | ⬜ |  |  |\n"
+        "| B | 2026.10 | ⬜ |  |  |\n"
+        "| C | later | ⬜ |  |  |\n"
+        "| D | 2026.9 | ⬜ |  |  |\n"
+    )
+    view = _load().render(table)
+    heads = [line.split("**")[1] for line in view.split("\n") if line.startswith("**")]
+    assert heads == ["2026.9", "2026.10", "2027.1", "Later"]

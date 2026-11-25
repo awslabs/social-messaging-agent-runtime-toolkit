@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from decimal import Decimal
 import logging
 import time
 from typing import Any
@@ -58,10 +59,15 @@ def _expired(item: dict) -> bool:
     """Whether a stored item's ``ttl`` has passed.
 
     DynamoDB deletes expired items in the background, so one can still be
-    returned for days. An item with no ``ttl`` never expires.
+    returned for days. Its TTL acts only on a Number, so an item with no
+    ``ttl``, or one that is not a number (a String, a Boolean), never expires.
     """
     ttl = item.get("ttl")
-    return ttl is not None and ttl < int(time.time())
+    return (
+        isinstance(ttl, (int, float, Decimal))
+        and not isinstance(ttl, bool)
+        and ttl < int(time.time())
+    )
 
 
 def _live() -> Any:
@@ -71,7 +77,7 @@ def _live() -> Any:
     ``delete_prefix`` does not, so cleanup still removes expired items.
     """
     attr = boto3.dynamodb.conditions.Attr("ttl")
-    return attr.not_exists() | attr.gte(int(time.time()))
+    return attr.not_exists() | ~attr.attribute_type("N") | attr.gte(int(time.time()))
 
 
 def _dev_read() -> dict:
@@ -289,9 +295,11 @@ async def claim_once(phone: str, name: str, ttl_minutes: int = 60) -> bool:
                     "ttl": now + ttl_minutes * 60,
                 },
                 # An expired marker DynamoDB has not deleted yet counts as absent.
-                ConditionExpression="attribute_not_exists(sk) OR #ttl < :now",
+                ConditionExpression=(
+                    "attribute_not_exists(sk) OR (attribute_type(#ttl, :n) AND #ttl < :now)"
+                ),
                 ExpressionAttributeNames={"#ttl": "ttl"},
-                ExpressionAttributeValues={":now": now},
+                ExpressionAttributeValues={":now": now, ":n": "N"},
             )
             return True
         except ClientError as e:
@@ -383,13 +391,16 @@ async def compare_and_set(
             # An expired item DynamoDB has not deleted yet is absent: it must not
             # block expected=None, and its stale `data` must not match `expected`.
             if expected is None:
-                cond = "attribute_not_exists(sk) OR #ttl < :now"
+                cond = "attribute_not_exists(sk) OR (attribute_type(#ttl, :n) AND #ttl < :now)"
                 names = {"#ttl": "ttl"}
-                values = {":now": now}
+                values = {":now": now, ":n": "N"}
             else:
-                cond = "#d = :expected AND (attribute_not_exists(#ttl) OR #ttl >= :now)"
+                cond = (
+                    "#d = :expected AND (attribute_not_exists(#ttl)"
+                    " OR NOT attribute_type(#ttl, :n) OR #ttl >= :now)"
+                )
                 names = {"#d": "data", "#ttl": "ttl"}
-                values = {":expected": json.dumps(expected), ":now": now}
+                values = {":expected": json.dumps(expected), ":now": now, ":n": "N"}
             table.put_item(
                 Item={
                     "pk": phone,

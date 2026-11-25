@@ -59,7 +59,7 @@ await state.delete(phone, key)
 - `phone` — E.164 phone number (partition key)
 - `key` — arbitrary string (sort key)
 - `data` — any JSON-serializable value
-- `ttl_minutes` — time-to-live, counted from this write; reading the item does not extend it, writing it again does. DynamoDB deletes expired items in the background, usually within a few days. Until it does, the item is still in the table, but `get` returns `None` for it, and `claim_once` and `compare_and_set` treat it as absent
+- `ttl_minutes` — time-to-live, counted from this write; reading the item does not extend it, writing it again does. DynamoDB deletes expired items in the background, usually within a few days. Until it does, the item is still in the table, but `get` returns `None` for it, and `claim_once` and `compare_and_set` treat it as absent. Only a Number `ttl` expires, as with DynamoDB's TTL: an item written to the table some other way with a `ttl` that is a String or a Boolean never expires, so it reads as live everywhere. DynamoDB's TTL also leaves an item whose `ttl` is more than five years in the past; the SDK reads such an item as absent everywhere. `socialagent dev` keeps no `ttl` in its local file: there a value never expires and a `claim_once` marker refuses until `/reset`, so try logic that depends on expiry with `socialagent dev --cloud`, against the deployed table
 
 `get`/`put`/`delete` are available both from `EventContext.state` (Lambda
 handlers) and from `socialagent_runtime.state` (agent-side). The functions below are

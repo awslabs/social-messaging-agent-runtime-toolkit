@@ -230,7 +230,7 @@ def test_send_message_retries_transient_failure(provider, memory_writer):
         side_effect=[Exception("ThrottlingException"), "msg-2"]
     )
     handler = make_scheduler_handler(provider, memory_writer, {})
-    with patch("socialagent.handlers.scheduler_event.asyncio.sleep", new=AsyncMock()):
+    with patch("socialagent.handlers.scheduled.asyncio.sleep", new=AsyncMock()):
         result = handler(_send_message(type="interactive", payload={}))
     assert result["statusCode"] == 200
     assert provider.send_message.await_count == 2
@@ -407,7 +407,7 @@ def test_send_text_retries_transient_failure(provider, memory_writer):
         side_effect=[Exception("ThrottlingException"), "msg-1"]
     )
     handler = make_scheduler_handler(provider, memory_writer, {})
-    with patch("socialagent.handlers.scheduler_event.asyncio.sleep", new=AsyncMock()):
+    with patch("socialagent.handlers.scheduled.asyncio.sleep", new=AsyncMock()):
         result = handler(
             {
                 "operation": "send_text",
@@ -439,7 +439,7 @@ def test_send_text_gives_up_after_max_attempts(provider, memory_writer):
     provider.send_text = AsyncMock(side_effect=Exception("ServiceUnavailable"))
     handler = make_scheduler_handler(provider, memory_writer, {})
     with (
-        patch("socialagent.handlers.scheduler_event.asyncio.sleep", new=AsyncMock()),
+        patch("socialagent.handlers.scheduled.asyncio.sleep", new=AsyncMock()),
         pytest.raises(Exception, match="ServiceUnavailable"),
     ):
         handler(
@@ -478,7 +478,7 @@ def test_chunked_send_text_does_not_resend_delivered_chunks(memory_writer):
 
     provider = ChunkingProvider()
     handler = make_scheduler_handler(provider, memory_writer, {})
-    with patch("socialagent.handlers.scheduler_event.asyncio.sleep", new=AsyncMock()):
+    with patch("socialagent.handlers.scheduled.asyncio.sleep", new=AsyncMock()):
         result = handler(
             {
                 "operation": "send_text",
