@@ -53,7 +53,9 @@ templates:
 
 ## Syncing Templates
 
-`socialagent templates sync` registers the templates in the project's templates file with Meta via EUM Social. It runs in two places: automatically, in CodeBuild, during every deploy (`infra-terraform/modules/templates`), and by hand when you want to push template changes without a full deploy. It exits non-zero if any template is rejected, so a rejection fails the deploy.
+`socialagent templates sync` registers the templates in the project's templates file with Meta via EUM Social. It runs in two places: automatically, in CodeBuild, during a deploy (`infra-terraform/modules/templates`), and by hand when you want to push template changes without a full deploy. It exits non-zero if any template is rejected, so a rejection fails the deploy.
+
+A deploy runs the sync only when the stack has both a templates file (`whatsapp.templates`) and a phone number (`whatsapp.phone_number_id`), and then on the first such deploy and on each one that changes something the sync reads: the templates file, the SDK the build installs, the phone number, the template prefix, or the CodeBuild project (a new Region replaces it). The sync also waits for the agent runtime, and the runtime for the stack's IAM roles and its AgentCore Memory, so a deploy that changes any of those, such as one that changes the agent's code or its configuration, runs it too. A deploy that changes none of these runs no sync, so a template missing for any other reason, such as one deleted from the WhatsApp Business Account, comes back on the next deploy that runs the sync, or when you run it by hand. A sync that fails runs again on the next deploy, whether or not that deploy changes anything.
 
 Inside a project, everything it needs comes from `socialagent.<env>.yaml`:
 

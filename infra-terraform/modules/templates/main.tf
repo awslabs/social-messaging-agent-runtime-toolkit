@@ -62,7 +62,7 @@ locals {
   # single dynamic block can carry all of them. fileset() reads the disk, not git, so
   # these are the same filters as local.layer_files in packaging.tf (rationale there):
   # `file()` only reads UTF-8, so a stray .pyc or .pdf would fail the plan outright,
-  # the archive's md5 is the CodeBuild trigger, so any local cache, virtualenv or
+  # the archive's md5 is a trigger of the sync, so any local cache, virtualenv or
   # build artifact would re-sync templates, and a stray .env, key or tfvars file
   # would land in the plan and state in plaintext.
   force_included_files = flatten([
@@ -287,7 +287,13 @@ resource "aws_codebuild_project" "template_sync" {
   }
 }
 
-# Trigger on YAML or SDK changes.
+# Runs again when anything the sync reads changes. The archive covers the
+# templates file and the SDK the build installs. The phone number and the
+# prefix reach the build only as environment variables, which update the
+# project in place, while the Lambdas send under a new prefix from the same
+# deploy, so each is a trigger of its own. AWS_REGION needs none: a new Region
+# replaces the project, and a replaced project replaces this resource through
+# project_arn.
 #
 # This waits for the build rather than firing and forgetting. A bare start-build
 # returns as soon as the build is queued, so a sync that fails seconds later still
@@ -296,8 +302,10 @@ resource "aws_codebuild_project" "template_sync" {
 # reminder quietly fell back to send_text.
 resource "null_resource" "trigger_template_sync" {
   triggers = {
-    source_hash = data.archive_file.template_source.output_md5
-    project_arn = aws_codebuild_project.template_sync.arn
+    source_hash     = data.archive_file.template_source.output_md5
+    project_arn     = aws_codebuild_project.template_sync.arn
+    phone_number_id = var.phone_number_id
+    template_prefix = var.template_prefix
   }
   provisioner "local-exec" {
     command = <<-EOT
