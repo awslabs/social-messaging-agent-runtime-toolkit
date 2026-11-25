@@ -21,6 +21,45 @@ from routes.stacks import _lambda_suffixes
 tracer = Tracer(service="admin-console-backend")
 logger = Logger(service="admin-console-backend", child=True)
 
+# clientToken is per request; description is the one field a restart changes.
+_NOT_COPIED_ON_RESTART = frozenset({"clientToken", "agentRuntimeId", "description"})
+
+
+def _without_empty(value):
+    """Drop None, empty strings, lists and dicts at every depth; False and 0 stay."""
+    if isinstance(value, dict):
+        value = {k: _without_empty(v) for k, v in value.items()}
+        return {k: v for k, v in value.items() if v is not None and v not in ("", [], {})}
+    if isinstance(value, list):
+        return [_without_empty(v) for v in value]
+    return value
+
+
+def _restart_agent_runtime(agentcore_cp, runtime_id: str, description: str) -> None:
+    """Start a new runtime version with the current configuration and a new description.
+
+    UpdateAgentRuntime replaces the whole configuration, so a field it is not
+    sent is cleared: an authorizer or a request header allowlist set by the
+    deploy would be dropped. Every field GetAgentRuntime returns that the
+    UpdateAgentRuntime input accepts is sent back as read, so a field AWS adds
+    to both is kept once the console's bundled botocore knows it. An empty
+    value is left out at any depth: the update clears it anyway, and botocore
+    refuses many empty lists before sending (allowedPorts, and the
+    authorizer's allowedAudience, have a minimum length of 1).
+    """
+    current = agentcore_cp.get_agent_runtime(agentRuntimeId=runtime_id)
+    accepted = agentcore_cp.meta.service_model.operation_model(
+        "UpdateAgentRuntime"
+    ).input_shape.members
+    kept = {
+        name: value
+        for name, value in _without_empty(current).items()
+        if name in accepted and name not in _NOT_COPIED_ON_RESTART
+    }
+    agentcore_cp.update_agent_runtime(
+        agentRuntimeId=runtime_id, description=description, **kept
+    )
+
 
 def handle_nuclear_reset(params, _body):
     """Nuclear option: clear all memory events and restart runtime."""
@@ -63,17 +102,10 @@ def handle_nuclear_reset(params, _body):
     if runtime_id:
         try:
             agentcore_cp = boto3.client("bedrock-agentcore-control", region_name=region)
-            current = agentcore_cp.get_agent_runtime(agentRuntimeId=runtime_id)
-            agentcore_cp.update_agent_runtime(
-                agentRuntimeId=runtime_id,
-                agentRuntimeArtifact=current["agentRuntimeArtifact"],
-                roleArn=current["roleArn"],
-                networkConfiguration=current["networkConfiguration"],
-                # Preserve existing env vars — omitting this arg clears them,
-                # which would brick the runtime (NOTIFICATION_LAMBDA_ARN is required).
-                # Mirrors handle_restart_runtime below.
-                environmentVariables=current.get("environmentVariables", {}) or {},
-                description=f"Nuclear reset from admin console at {datetime.now(UTC)}",
+            _restart_agent_runtime(
+                agentcore_cp,
+                runtime_id,
+                f"Nuclear reset from admin console at {datetime.now(UTC)}",
             )
             results["runtime_restarted"] = True
         except Exception:
@@ -115,15 +147,10 @@ def handle_restart_runtime(params, _body):
         agentcore_cp = boto3.client(
             "bedrock-agentcore-control", region_name=config.get("region", REGION)
         )
-        current = agentcore_cp.get_agent_runtime(agentRuntimeId=runtime_id)
-        agentcore_cp.update_agent_runtime(
-            agentRuntimeId=runtime_id,
-            agentRuntimeArtifact=current["agentRuntimeArtifact"],
-            roleArn=current["roleArn"],
-            networkConfiguration=current["networkConfiguration"],
-            # Preserve existing env vars — omitting this arg clears them.
-            environmentVariables=current.get("environmentVariables", {}) or {},
-            description=f"Restarted from admin console at {datetime.now(UTC)}",
+        _restart_agent_runtime(
+            agentcore_cp,
+            runtime_id,
+            f"Restarted from admin console at {datetime.now(UTC)}",
         )
         return _json(
             200, {"restarted": runtime_id, "timestamp": str(datetime.now(UTC))}
