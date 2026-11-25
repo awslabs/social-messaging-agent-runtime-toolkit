@@ -40,6 +40,7 @@ To change an accepted decision, open a new record that supersedes it rather than
 | [0010](0010-whatsapp-only-through-eum-social.md) | WhatsApp is reached only through AWS End User Messaging Social | Accepted |
 | [0012](0012-lifecycle-from-the-package.md) | The package carries the stack's Terraform, so a pip install covers the whole lifecycle | Accepted |
 | [0013](0013-runtime-supplied-by-deploy.md) | The deploy supplies the agent runtime; the project holds no copy | Proposed |
+| [0014](0014-console-extensions.md) | Console extensions are separate stacks that add pages through a versioned host contract | Proposed |
 
 ## Format
 
