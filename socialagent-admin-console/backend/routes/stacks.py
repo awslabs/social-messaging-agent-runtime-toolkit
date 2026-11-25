@@ -623,7 +623,7 @@ def _legacy_model_fields(config: dict) -> dict:
         if not model_id or _foundation_lifecycle(model_id, region) != "LEGACY":
             return {}
     except (ClientError, BotoCoreError) as exc:
-        reason = exc.response["Error"]["Code"] if isinstance(exc, ClientError) else type(exc).__name__
+        reason = exc.response.get("Error", {}).get("Code", "ClientError") if isinstance(exc, ClientError) else type(exc).__name__
         logger.warning("model_lifecycle_unreadable", extra={"reason": reason})
         return {}
     return {

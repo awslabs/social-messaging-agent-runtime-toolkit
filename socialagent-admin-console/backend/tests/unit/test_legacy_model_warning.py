@@ -144,6 +144,24 @@ def test_unreadable_model_logs_one_warning_and_returns_stack(stacks, monkeypatch
         bedrock.get_inference_profile.assert_not_called()
 
 
+@pytest.mark.parametrize("response", [{}, {"Error": {}}, {"Error": {"Message": "no code"}}])
+def test_client_error_without_a_code_still_returns_stack(stacks, monkeypatch, aws, response):
+    lam, bedrock, _ = aws
+    lam.get_function_configuration.side_effect = ClientError(response, "GetFunctionConfiguration")
+    monkeypatch.setattr(stacks, "_get_registry", lambda _id: CONFIG)
+    monkeypatch.setattr(stacks, "_stack_status", lambda _config: {"health": "healthy"})
+    warning = MagicMock()
+    monkeypatch.setattr(stacks.logger, "warning", warning)
+
+    detail = stacks.handle_get_stack({"id": "bot-dev"}, {})
+
+    assert detail["statusCode"] == 200
+    assert json.loads(detail["body"]) == {"health": "healthy"}
+    warning.assert_called_once_with("model_lifecycle_unreadable", extra={"reason": "ClientError"})
+    bedrock.get_inference_profile.assert_not_called()
+    bedrock.get_foundation_model.assert_not_called()
+
+
 def test_handle_get_stack_includes_legacy_fields_and_list_does_not(stacks, monkeypatch):
     payload = {"health": "healthy", "lambdas": []}
     fields = {
