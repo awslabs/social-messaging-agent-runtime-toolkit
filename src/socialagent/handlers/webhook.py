@@ -47,6 +47,24 @@ from socialagent.utils.rate_limiter import is_rate_limited
 logger = logging.getLogger(__name__)
 
 
+def _log_failed_status(status: StatusUpdate) -> None:
+    """Log a send WhatsApp accepted and then failed to deliver.
+
+    Such a send raised nothing, so this line is its only trace. The message id
+    is left out: a WhatsApp message id encodes the recipient's number.
+    """
+    errors = status.raw.get("errors")
+    first = errors[0] if isinstance(errors, list) and errors else {}
+    if not isinstance(first, dict):
+        first = {}
+    logger.warning(
+        "WhatsApp did not deliver a message to %s: error %s %s",
+        mask_phone(status.recipient),
+        first.get("code", "unknown"),
+        mask_phone(str(first.get("title", ""))),
+    )
+
+
 def _gap_seconds(config: SocialAgentConfig, context: object) -> float:
     """The pause before the next message to the user (see ``common.gap_seconds``)."""
     return gap_seconds(config.outbound_gap_seconds, context)
@@ -665,6 +683,8 @@ def make_webhook_handler(
             return {"statusCode": 200, "body": "no message"}
 
         if isinstance(parsed, StatusUpdate):
+            if parsed.status == "failed":
+                _log_failed_status(parsed)
             if on_status:
                 await on_status(parsed)
             return {"statusCode": 200, "body": "ok"}

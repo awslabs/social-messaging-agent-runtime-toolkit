@@ -14,18 +14,21 @@ import functools
 import json
 import logging
 import re
+import threading
 import time
 import urllib.parse
 import urllib.request
+from typing import NoReturn
 
 import boto3
+from botocore.config import Config
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives.asymmetric.types import CertificatePublicKeyTypes
 from cryptography.x509 import load_pem_x509_certificate
 
 from socialagent.constants import OUTBOUND_GAP_SECONDS
-from socialagent.providers import MessageProvider
+from socialagent.providers import MessageProvider, TemplateNotApprovedError
 from socialagent.providers.utils import (
     chunk_text,
     extract_changes,
@@ -47,6 +50,37 @@ class MediaTooLarge(RuntimeError):
         self.size = size
         self.max_bytes = max_bytes
 
+
+# How long a template found APPROVED is sent without checking again. Meta can
+# pause an approved template, so the answer is not kept for the container's
+# life.
+_APPROVED_TEMPLATE_TTL_SECONDS = 300.0
+
+# How long a template found not APPROVED is refused without checking again.
+# The lookup fails open, so in a burst of sends of a PENDING template (a
+# reminder firing for many users) a throttled listing would let out the very
+# template the check stops. The refusal lives on the provider, one per Lambda
+# execution environment, and the burst runs as concurrent invocations, so it
+# covers only the later sends that reach the same warm environment: the first
+# send in each new environment lists the templates, and a throttled one there
+# still sends unchecked. Kept short, as an approval takes effect only once it
+# expires.
+_REFUSED_TEMPLATE_TTL_SECONDS = 60.0
+
+# At most this many refusals are kept. An agent can queue a template by any
+# name, and each name the WABA does not list is a refusal of its own.
+_REFUSED_TEMPLATE_MAX_ENTRIES = 256
+
+# The approval lookup runs before a send, often with little of the Lambda's
+# time left (the webhook's reply follows a long agent turn), so it gets two
+# attempts of at most 2 s to connect and 3 s to read, about 11 s in all, as
+# the admin console's template reads do, instead of the send client's legacy
+# retries and 60 s timeouts. A lookup that still fails sends unchecked.
+_LOOKUP_CONFIG = Config(
+    connect_timeout=2,
+    read_timeout=3,
+    retries={"mode": "standard", "total_max_attempts": 2},
+)
 
 # Top-level keys of a WhatsApp send that the provider owns, never the payload.
 # recipient_type is one because it decides what "to" addresses (a user or a group).
@@ -82,7 +116,21 @@ class EUMSocialProvider(MessageProvider):
         # back to back out of order, which would scramble a split reply.
         self._message_gap_seconds = message_gap_seconds
         self._client = boto3.client("socialmessaging", region_name=region)
-        self._waba_id: str = ""  # lazy-loaded on first template sync call
+        self._lookup_client = boto3.client(
+            "socialmessaging", region_name=region, config=_LOOKUP_CONFIG
+        )
+        self._waba_id: str = ""  # lazy-loaded on the first template sync or send
+        # Both template caches are keyed by (full template name, language): the
+        # provider sends from one number, so from one WABA, and the full name
+        # carries the stack's prefix.
+        # The time.monotonic() until which the template counts as approved
+        # without a lookup.
+        self._approved_until: dict[tuple[str, str], float] = {}
+        # The time.monotonic() until which the template is refused without a
+        # lookup, and the status that refused it. Insertion order is expiry
+        # order, as every refusal is kept as long.
+        self._refused_until: dict[tuple[str, str], tuple[float, str]] = {}
+        self._refused_lock = threading.Lock()
 
     # ── Inbound ───────────────────────────────────────────────────────────────
 
@@ -200,10 +248,20 @@ class EUMSocialProvider(MessageProvider):
         header_params: list[str] | None = None,
         button_payloads: list[str] | None = None,
     ) -> str:
-        """Send a pre-approved WhatsApp template message. Returns the message ID."""
+        """Send a pre-approved WhatsApp template message. Returns the message ID.
+
+        Raises:
+            TemplateNotApprovedError: the WhatsApp Business Account lists the
+                template in ``language`` with a status other than APPROVED, or
+                does not list it. Nothing is sent. This provider remembers a
+                refusal for 60 seconds, so a send through it in that time is
+                refused without a lookup. Otherwise, when the lookup itself
+                fails, the template is sent unchecked, as before the check.
+        """
         if not to.startswith("+"):
             to = f"+{to}"
         full_name = f"{self._template_prefix}{name}" if self._template_prefix else name
+        await asyncio.to_thread(self._require_approved, full_name, language)
         components: list[dict] = []
         if header_params:
             components.append(
@@ -421,6 +479,82 @@ class EUMSocialProvider(MessageProvider):
             return results
 
         return await asyncio.to_thread(_list)
+
+    def _require_approved(self, full_name: str, language: str) -> None:
+        """Raise TemplateNotApprovedError unless the WABA lists the template
+        APPROVED in ``language``. The listing is read page by page up to the
+        template, and a lookup that fails before reaching it lets the send go
+        ahead unchecked, so a missing grant or a throttle loses no message that
+        went out before the check existed. Once a lookup by this provider (one
+        per Lambda execution environment) finds the template not APPROVED, it
+        is refused from that result, with no lookup, for
+        ``_REFUSED_TEMPLATE_TTL_SECONDS`` after that lookup, so a throttle in
+        that time cannot let it out."""
+        key = (full_name, language)
+        now = time.monotonic()
+        if self._approved_until.get(key, 0.0) > now:
+            return
+        refused = self._refused_until.get(key)
+        if refused and refused[0] > now:
+            self._refuse(full_name, language, refused[1])
+        status: str | None = None
+        try:
+            if not self._waba_id:
+                self._waba_id = self._lookup_client.get_linked_whatsapp_business_account_phone_number(
+                    id=self._phone_number_id
+                )["linkedWhatsAppBusinessAccountId"]
+            kwargs: dict = {"id": self._waba_id, "maxResults": 100}
+            while status is None:
+                resp = self._lookup_client.list_whatsapp_message_templates(**kwargs)
+                status = next(
+                    (
+                        t.get("templateStatus", "")
+                        for t in resp.get("templates", [])
+                        if t.get("templateName") == full_name
+                        and t.get("templateLanguage") == language
+                    ),
+                    None,
+                )
+                if not resp.get("nextToken"):
+                    break
+                kwargs["nextToken"] = resp["nextToken"]
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "Could not check template %s (%s) before sending it, sending it unchecked: %s: %s",
+                full_name,
+                language,
+                type(e).__name__,
+                mask_phone(str(e)),
+            )
+            return
+        if status != "APPROVED":
+            self._remember_refusal(key, status or "")
+            self._refuse(full_name, language, status or "")
+        self._approved_until[key] = time.monotonic() + _APPROVED_TEMPLATE_TTL_SECONDS
+
+    def _remember_refusal(self, key: tuple[str, str], status: str) -> None:
+        """Refuse *key* without a lookup for ``_REFUSED_TEMPLATE_TTL_SECONDS``,
+        keeping at most ``_REFUSED_TEMPLATE_MAX_ENTRIES`` refusals."""
+        now = time.monotonic()
+        # The lock keeps a send in another thread from changing the dict while
+        # this one drops entries from its front.
+        with self._refused_lock:
+            refused = self._refused_until
+            refused.pop(key, None)
+            while refused and (
+                next(iter(refused.values()))[0] <= now
+                or len(refused) >= _REFUSED_TEMPLATE_MAX_ENTRIES
+            ):
+                del refused[next(iter(refused))]
+            refused[key] = (now + _REFUSED_TEMPLATE_TTL_SECONDS, status)
+
+    @staticmethod
+    def _refuse(full_name: str, language: str, status: str) -> NoReturn:
+        error = TemplateNotApprovedError(full_name, language, status)
+        # Every caller sees the refusal in the log, including one that falls
+        # back without logging it.
+        logger.warning("%s: not sending it", error)
+        raise error
 
     async def register_template(self, template: dict, prefix: str = "") -> None:
         """Create or update a template with the WABA.

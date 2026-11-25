@@ -183,6 +183,11 @@ class EventContext:
             name: Template name (without prefix).
             params: Ordered body parameter values.
             language: BCP-47 language code.
+
+        Raises:
+            TemplateNotApprovedError: (``socialagent.providers``) Meta has not
+                approved the template in ``language``; nothing was sent or
+                written to memory, so the handler can fall back, e.g. to text.
         """
         await self._provider.send_template(phone, name, language, params)
         try:
