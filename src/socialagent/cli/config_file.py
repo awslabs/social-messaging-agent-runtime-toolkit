@@ -25,6 +25,40 @@ from socialagent.cli._runner import CommandError, Runner, run
 _SCHEMA_VERSION = _schema.SCHEMA_VERSION
 
 
+class _StrictDuplicateKeyLoader(yaml.SafeLoader):
+    """A ``SafeLoader`` that rejects a mapping with a repeated key.
+
+    Pasting a second top-level block (for example a second ``terraform:``
+    from a README snippet) silently keeps only the last of two identical
+    keys under plain ``yaml.safe_load``, dropping the first block's
+    settings with no warning.
+    """
+
+
+def _construct_mapping_no_duplicates(
+    loader: yaml.SafeLoader, node: yaml.MappingNode
+) -> dict[str, Any]:
+    mapping: dict[str, Any] = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=False)
+        if key in mapping:
+            raise yaml.YAMLError(
+                f"duplicate key {key!r} at line {key_node.start_mark.line + 1}"
+            )
+        mapping[key] = loader.construct_object(value_node, deep=False)
+    return mapping
+
+
+_StrictDuplicateKeyLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_mapping_no_duplicates
+)
+
+
+def _safe_load(text: str) -> Any:
+    """Like ``yaml.safe_load``, but raises on a mapping with a duplicate key."""
+    return yaml.load(text, Loader=_StrictDuplicateKeyLoader)
+
+
 def error_message_env_vars(config: dict[str, Any]) -> dict[str, str]:
     """Extract ERROR_MSG_* env vars from the yaml ``error_messages`` block.
 
@@ -60,7 +94,7 @@ def load(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     try:
-        config = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        config = _safe_load(path.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as exc:
         raise ConfigError(f"{path.name} is not valid YAML: {exc}") from exc
     if not isinstance(config, dict):
@@ -92,7 +126,7 @@ def check_environment(config: dict[str, Any], env_name: str, path: Path) -> None
 
 def file_schema_version(path: Path) -> int:
     """The ``schema_version`` written in *path*, before :func:`load` upgrades it."""
-    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    raw = _safe_load(path.read_text(encoding="utf-8")) or {}
     version = raw.get("schema_version", 1) if isinstance(raw, dict) else 1
     return version if isinstance(version, int) else 1
 
