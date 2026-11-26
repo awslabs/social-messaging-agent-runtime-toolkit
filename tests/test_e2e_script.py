@@ -62,3 +62,69 @@ def test_a_reply_that_promises_a_reminder_without_a_schedule_fails(monkeypatch):
         before=["dev-p-5215500000000-old"], after=["dev-p-5215500000000-old"]
     )
     assert not mod.test_scheduling(None, "arn", "mem", sched, "dev-p-5215500000000-")
+
+
+class _PagedScheduler:
+    """Two pages per listing; the turn's new schedule lands on the second page."""
+
+    def __init__(self):
+        self.prefixes: list[str] = []
+
+    def get_paginator(self, name):
+        assert name == "list_schedules"
+        return self
+
+    def paginate(self, NamePrefix):  # noqa: N803 (boto3's parameter name)
+        self.prefixes.append(NamePrefix)
+        second = [f"{NamePrefix}old-2"]
+        if len(self.prefixes) > 1:
+            second.append(f"{NamePrefix}new")
+        return [
+            {"Schedules": [{"Name": f"{NamePrefix}old-1"}]},
+            {"Schedules": [{"Name": n} for n in second]},
+        ]
+
+
+def test_the_prefix_is_env_then_project_then_the_test_phone():
+    mod = _load()
+    assert mod.schedule_prefix("test", "shop") == "test-shop-5215500000000-"
+
+
+def test_schedule_names_reads_every_page():
+    mod = _load()
+    names = mod.schedule_names(_PagedScheduler(), "dev-p-5215500000000-")
+    assert names == {"dev-p-5215500000000-old-1", "dev-p-5215500000000-old-2"}
+
+
+def test_main_checks_the_reminder_under_the_stacks_prefix(monkeypatch):
+    mod = _load()
+    sched = _PagedScheduler()
+    replies = iter(
+        [
+            "Hi! I can set reminders, remember things and more.",
+            "*Reminders*, *notes* and *images*",
+            "Got it, I saved that your favorite color is blue",
+            "Your favorite color is blue",
+            "Listo, te recordaré en 5 minutos",
+        ]
+    )
+    monkeypatch.setattr(mod, "invoke", lambda *a, **k: next(replies))
+    monkeypatch.setattr(mod.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(
+        mod,
+        "load_config",
+        lambda env: {
+            "project": "shop",
+            "environment": "test",
+            "region": "us-east-1",
+            "outputs": {"runtime_arn": "arn", "memory_id": "mem"},
+        },
+    )
+    monkeypatch.setattr(
+        mod.boto3,
+        "client",
+        lambda service, **k: sched if service == "scheduler" else object(),
+    )
+    monkeypatch.setattr(mod.sys, "argv", ["e2e_test.py", "--env", "test"])
+    mod.main()  # sys.exit(1) on any failed check
+    assert sched.prefixes == ["test-shop-5215500000000-", "test-shop-5215500000000-"]

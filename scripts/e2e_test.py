@@ -8,6 +8,10 @@ E2E smoke tests against a deployed SMART stack.
 Reads connection info from socialagent.<env>.yaml and invokes the AgentCore Runtime
 directly. Tests the full agent loop: prompt -> LLM -> tools -> response.
 
+The credentials need bedrock-agentcore:InvokeAgentRuntime on the stack's runtime and
+scheduler:ListSchedules, which the scheduling check uses to read back the reminder the
+turn created.
+
 Usage:
     cd projects/<your-bot>
     AWS_PROFILE=<profile> python ../../scripts/e2e_test.py
@@ -110,6 +114,17 @@ def test_remember_recall(client, arn, memory_id) -> bool:
     return stored and recalled
 
 
+def schedule_prefix(env: str, project: str) -> str:
+    """The name prefix of the test phone's schedules on the stack.
+
+    The stack names a schedule {env}-{project}-{schedule id}. This covers the ids the
+    runtime generates, {digits}-{operation}-{hash}, which every personal-assistant tool
+    uses; an id the runtime also counts as the phone's, a trailing <label>-{digits}, does
+    not start with the digits and is not listed (docs/events-scheduling.md).
+    """
+    return f"{env}-{project}-{DIGITS}-"
+
+
 def schedule_names(scheduler, prefix: str) -> set[str]:
     names: set[str] = set()
     for page in scheduler.get_paginator("list_schedules").paginate(NamePrefix=prefix):
@@ -148,15 +163,13 @@ def main():
     region = config.get("region", "us-east-1")
     client = boto3.client("bedrock-agentcore", region_name=region)
     scheduler = boto3.client("scheduler", region_name=region)
-    # The stack names a schedule {env}-{project}-{schedule id}, and an id owned by a phone
-    # starts with its digits (docs/events-scheduling.md).
-    schedule_prefix = f"{env}-{project}-{DIGITS}-"
+    prefix = schedule_prefix(env, project)
 
     tests = [
         ("Agent responds to greeting", lambda: test_greeting(client, arn, memory_id)),
         ("WhatsApp formatting", lambda: test_whatsapp_formatting(client, arn, memory_id)),
         ("Remember + Recall", lambda: test_remember_recall(client, arn, memory_id)),
-        ("Scheduling", lambda: test_scheduling(client, arn, memory_id, scheduler, schedule_prefix)),
+        ("Scheduling", lambda: test_scheduling(client, arn, memory_id, scheduler, prefix)),
     ]
 
     results = []
