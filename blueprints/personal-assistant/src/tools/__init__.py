@@ -115,7 +115,7 @@ def _one_shot_timing(delay_minutes: int, at_datetime: str, timezone: str) -> dic
 _SCHEDULED_TASK_SESSION = "scheduled-task-"
 
 
-def _in_scheduled_task() -> bool:
+def in_scheduled_task() -> bool:
     """True when this turn is a scheduled task, not a message from the user.
 
     A task runs with every tool. One that could create schedules could
@@ -218,7 +218,7 @@ async def schedule_reminder(
         timezone: The user's IANA time zone (e.g. "America/Mexico_City"), as stored
             with remember(key="timezone"). Needed when at_datetime has no offset.
     """
-    if _in_scheduled_task():
+    if in_scheduled_task():
         return _no_schedules_in_a_task()
     phone: str = tool_context.invocation_state.get("phone", "")
     if not phone:
@@ -268,7 +268,7 @@ async def schedule_task(
         timezone: The user's IANA time zone (e.g. "America/Mexico_City"), as stored
             with remember(key="timezone"). Needed when at_datetime has no offset.
     """
-    if _in_scheduled_task():
+    if in_scheduled_task():
         return _no_schedules_in_a_task()
     phone: str = tool_context.invocation_state.get("phone", "")
     if not phone:
@@ -362,7 +362,7 @@ async def schedule_recurring(
         timezone: The user's IANA time zone (e.g. "America/Mexico_City"), as stored
             with remember(key="timezone"). Empty means the cron is in UTC.
     """
-    if _in_scheduled_task():
+    if in_scheduled_task():
         return _no_schedules_in_a_task()
     phone: str = tool_context.invocation_state.get("phone", "")
     if not phone:

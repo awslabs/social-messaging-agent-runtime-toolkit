@@ -21,7 +21,7 @@ from socialagent_runtime.config import config
 
 from src.model import MODEL_ID
 from src.skills import load_skill_index
-from src.tools import RECURRING_OPERATIONS, socialagent_tools
+from src.tools import RECURRING_OPERATIONS, in_scheduled_task, socialagent_tools
 
 app = BedrockAgentCoreApp()
 
@@ -71,6 +71,15 @@ Always respond in the user's language. Load a skill with `load_skill(name)` when
 
 {skill_index}"""
 
+# Added for a scheduled task (handlers/scheduler.py), whose user turn is the
+# task alone. These rules live in the system prompt because a Bedrock guardrail
+# does not evaluate it: in the user turn the prompt-attack filter scored them
+# as an attempt to override instructions.
+SCHEDULED_TASK_RULES = """SCHEDULED TASK: this turn is a task the user scheduled earlier, \
+not a new message from them. The user's message is the task description. Do the task \
+and reply in the language of the task description, in text only: voice notes, images \
+and interactive messages are not delivered from a scheduled task."""
+
 model = BedrockModel(**_model_kwargs())
 
 
@@ -82,6 +91,8 @@ async def invoke(payload: dict, context: object = None) -> dict:
         time_context=_current_time_context(),
         skill_index=load_skill_index(accepted=RECURRING_OPERATIONS),
     )
+    if in_scheduled_task():
+        system_prompt = f"{system_prompt}\n\n{SCHEDULED_TASK_RULES}"
     agent = Agent(
         model=model,
         system_prompt=system_prompt,

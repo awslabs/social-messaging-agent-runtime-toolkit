@@ -266,19 +266,16 @@ async def test_the_follow_up_skips_its_gap_when_the_lambda_is_nearly_out(
 
 
 @pytest.mark.asyncio
-async def test_the_task_is_told_its_media_is_not_delivered(handler_module):
-    """A voice note, image or interactive message the scheduled agent sends is
-    queued for a webhook drain that never runs here, so the task is asked for
-    text only."""
+async def test_the_user_turn_is_the_task_alone(handler_module):
+    """The stack guardrail evaluates the user turn, and its prompt-attack filter
+    blocked every task while the turn opened with instructions for the agent.
+    Those rules (text only, the task's language) are in the agent's system
+    prompt; tests/test_blueprint_scheduled_task_guardrail.py checks them."""
     _agent_returns(handler_module, "Listo.")
     await _run(handler_module, _ctx())
 
     kwargs = handler_module.agentcore.invoke_agent_runtime.call_args.kwargs
-    prompt = json.loads(kwargs["payload"])["prompt"]
-    assert prompt.endswith(f"Task: {PROMPT}")
-    assert "text only" in prompt
-    for kind in ("voice notes", "images", "interactive messages"):
-        assert kind in prompt
+    assert json.loads(kwargs["payload"])["prompt"] == PROMPT
 
 
 @pytest.mark.asyncio
@@ -312,6 +309,6 @@ async def test_a_recurring_task_made_before_it_stored_a_prompt_still_runs(
     )
 
     kwargs = handler_module.agentcore.invoke_agent_runtime.call_args.kwargs
-    assert json.loads(kwargs["payload"])["prompt"].endswith(f"Task: {PROMPT}")
+    assert json.loads(kwargs["payload"])["prompt"] == PROMPT
     assert ctx.send_template.await_args.args[2] == [PROMPT, "Cree en ti."]
     ctx.send_text.assert_not_awaited()
