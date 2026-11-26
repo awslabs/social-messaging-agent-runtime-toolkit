@@ -1,0 +1,57 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Labels
+
+# Labels each pull request docs-only, infra, runtime, console or ci from the
+# files it changes (.github/labeler.yml), so a reviewer sees which review is
+# five minutes and which is an hour before opening it.
+#
+# pull_request_target, not pull_request: a pull request from a fork gets a
+# read-only token under pull_request, which cannot add a label. This trigger
+# runs the default branch's copy of this workflow with the base repository's
+# token, and without the approval a fork's other runs wait for, so it is safe
+# only while no step checks out, builds or runs the pull request's code. The
+# labeler reads the list of changed files, and its configuration from the
+# default branch, through the API, and runs nothing else. What keeps it so is
+# that a pull request's own edits to this file, labeler.yml or the test do not
+# run, and that the .github/ code owner reviews any change to them;
+# tests/test_pr_labels.py pins this whole file so such a change shows in the
+# test too. No check, ruleset or workflow reads the labels: they only inform
+# review.
+#
+# zizmor reports every pull_request_target as dangerous-triggers. The ignore
+# is for this workflow only.
+#
+# Because the workflow comes from the default branch, a change to this file or
+# to .github/labeler.yml reaches a pull request once it has merged, at the pull
+# request's next push or reopen.
+on: # zizmor: ignore[dangerous-triggers]
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+# Nothing by default; the job asks for what it needs.
+permissions: {}
+
+# A new push supersedes the run for the same pull request. github.ref is the
+# default branch under this trigger, so the group names the pull request.
+concurrency:
+  group: labels-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # No issues: write, so the labeler cannot create a label: each label in
+  # labeler.yml must exist in the repository before this workflow runs with it,
+  # or the run fails.
+  label:
+    name: label
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13 # v7.0.0
+        with:
+          # Drop a label when a later push no longer changes a file it matches.
+          sync-labels: true
