@@ -39,8 +39,18 @@ CURRENT = {
         }
     },
     "networkConfiguration": {"networkMode": "PUBLIC"},
+    # The stack's Terraform sets these to "" by default (a feature turned off,
+    # brand details left unset); project code may read them with os.environ[].
     "environmentVariables": {
-        "NOTIFICATION_LAMBDA_ARN": "arn:aws:lambda:us-east-1:123456789012:function:dev-bot-notification"
+        "NOTIFICATION_LAMBDA_ARN": "arn:aws:lambda:us-east-1:123456789012:function:dev-bot-notification",
+        "SCHEDULER_LAMBDA_ARN": "",
+        "STATE_TABLE_NAME": "",
+        "BRAND_NAME": "",
+        "SUPPORT_PHONE": "",
+        "SUPPORT_EMAIL": "",
+        "SUPPORT_HOURS": "",
+        "WEBSITE": "",
+        "MEDIA_PREFIX": "",
     },
     "authorizerConfiguration": {
         "customJWTAuthorizer": {
@@ -217,3 +227,84 @@ def test_a_nested_empty_list_is_left_out_not_sent():
     ]
     assert sent["metadataConfiguration"] == {"requireMMDSV2": False}
     assert "platformVersion" not in sent
+
+
+def _restart_with(current: dict) -> dict:
+    from routes import ops
+
+    client = MagicMock()
+    client.meta.service_model = _client().meta.service_model
+    client.get_agent_runtime.return_value = current
+
+    ops._restart_agent_runtime(client, RUNTIME_ID, "restart")
+
+    return client.update_agent_runtime.call_args.kwargs
+
+
+def test_environment_variables_set_to_empty_strings_are_sent_back():
+    # EnvironmentVariableValue has a minimum length of 0: a variable set to ""
+    # is still set, and code reading os.environ["BRAND_NAME"] needs it there.
+    sent = _restart_with(CURRENT)
+
+    assert sent["environmentVariables"] == CURRENT["environmentVariables"]
+    assert sent["environmentVariables"]["BRAND_NAME"] == ""
+
+
+def test_an_empty_environment_variables_map_is_left_out():
+    sent = _restart_with({**CURRENT, "environmentVariables": {}})
+
+    assert "environmentVariables" not in sent
+    assert sent["authorizerConfiguration"] == CURRENT["authorizerConfiguration"]
+
+
+def test_a_nested_tag_set_to_an_empty_string_is_sent_back():
+    # TagValue has a minimum length of 0, like an environment variable.
+    from botocore.validate import validate_parameters
+
+    model = _client().meta.service_model
+    tags = {"team": "bots", "cost-center": ""}
+    jwt = {
+        **CURRENT["authorizerConfiguration"]["customJWTAuthorizer"],
+        "privateEndpoint": {
+            "managedVpcResource": {
+                "vpcIdentifier": "vpc-0123456789abcdef0",
+                "subnetIds": ["subnet-0123456789abcdef0"],
+                "endpointIpAddressType": "IPV4",
+                "tags": tags,
+            }
+        },
+    }
+
+    sent = _restart_with(
+        {**CURRENT, "authorizerConfiguration": {"customJWTAuthorizer": jwt}}
+    )
+
+    validate_parameters(sent, model.operation_model("UpdateAgentRuntime").input_shape)
+    endpoint = sent["authorizerConfiguration"]["customJWTAuthorizer"]["privateEndpoint"]
+    assert endpoint["managedVpcResource"]["tags"] == tags
+
+
+def test_a_failed_restart_is_logged_and_answers_500(monkeypatch, caplog):
+    from routes import ops
+
+    detail = "not authorized to perform: bedrock-agentcore:PassCapacityProvider"
+    client = MagicMock()
+    client.meta.service_model = _client().meta.service_model
+    client.get_agent_runtime.return_value = CURRENT
+    client.update_agent_runtime.side_effect = RuntimeError(detail)
+    monkeypatch.setattr(ops.boto3, "client", lambda *a, **k: client)
+    monkeypatch.setattr(
+        ops,
+        "_get_registry",
+        lambda _id: {"region": "us-east-1", "outputs": {"runtime_id": RUNTIME_ID}},
+    )
+
+    resp = ops.handle_restart_runtime({"id": "bot-dev"}, {})
+
+    assert resp["statusCode"] == 500
+    assert detail not in resp["body"]
+    assert json.loads(resp["body"])["error"].startswith("Runtime restart failed")
+    # The response hides the exception; the log keeps it, with the traceback.
+    record = next(r for r in caplog.records if r.getMessage() == "Runtime restart failed")
+    assert record.levelname == "ERROR"
+    assert record.exc_info and detail in str(record.exc_info[1])

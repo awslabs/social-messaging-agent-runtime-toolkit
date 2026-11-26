@@ -25,13 +25,23 @@ logger = Logger(service="admin-console-backend", child=True)
 _NOT_COPIED_ON_RESTART = frozenset({"clientToken", "agentRuntimeId", "description"})
 
 
-def _without_empty(value):
-    """Drop None, empty strings, lists and dicts at every depth; False and 0 stay."""
-    if isinstance(value, dict):
-        value = {k: _without_empty(v) for k, v in value.items()}
+def _without_empty(value, shape):
+    """Keep the members ``shape`` models, dropping empty ones at every depth.
+
+    A structure member that is None, "" or an empty list or map is left out;
+    False and 0 stay. A map's entries are kept as read: its values may be ""
+    (an environment variable or a tag value has a minimum length of 0), so
+    only an empty map is left out, by the structure that holds it.
+    """
+    if shape.type_name == "structure" and isinstance(value, dict):
+        value = {
+            k: _without_empty(v, shape.members[k])
+            for k, v in value.items()
+            if k in shape.members
+        }
         return {k: v for k, v in value.items() if v is not None and v not in ("", [], {})}
-    if isinstance(value, list):
-        return [_without_empty(v) for v in value]
+    if shape.type_name == "list" and isinstance(value, list):
+        return [_without_empty(v, shape.member) for v in value]
     return value
 
 
@@ -43,18 +53,19 @@ def _restart_agent_runtime(agentcore_cp, runtime_id: str, description: str) -> N
     deploy would be dropped. Every field GetAgentRuntime returns that the
     UpdateAgentRuntime input accepts is sent back as read, so a field AWS adds
     to both is kept once the console's bundled botocore knows it. An empty
-    value is left out at any depth: the update clears it anyway, and botocore
+    member is left out at any depth: the update clears it anyway, and botocore
     refuses many empty lists before sending (allowedPorts, and the
-    authorizer's allowedAudience, have a minimum length of 1).
+    authorizer's allowedAudience, have a minimum length of 1). A map is sent
+    back whole, so an environment variable set to "" is still set.
     """
     current = agentcore_cp.get_agent_runtime(agentRuntimeId=runtime_id)
     accepted = agentcore_cp.meta.service_model.operation_model(
         "UpdateAgentRuntime"
-    ).input_shape.members
+    ).input_shape
     kept = {
         name: value
-        for name, value in _without_empty(current).items()
-        if name in accepted and name not in _NOT_COPIED_ON_RESTART
+        for name, value in _without_empty(current, accepted).items()
+        if name not in _NOT_COPIED_ON_RESTART
     }
     agentcore_cp.update_agent_runtime(
         agentRuntimeId=runtime_id, description=description, **kept
