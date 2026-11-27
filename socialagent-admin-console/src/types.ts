@@ -255,7 +255,7 @@ export interface StateEntry {
   phone: string;
   key: string;
   value: unknown;
-  ttl: number;
+  ttl: number | null;
 }
 
 export interface LogEntry {

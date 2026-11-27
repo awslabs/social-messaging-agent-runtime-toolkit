@@ -12,6 +12,7 @@ their partition as a user.
 """
 
 import json
+from decimal import Decimal
 
 import boto3
 import pytest
@@ -23,6 +24,16 @@ from moto import mock_aws
 TABLE = "bot-dev-state"
 PHONE = "+15555550100"
 SCHEDULE_PK = "_schedule#3f2a9c1d"
+
+# What the list routes return for the items in state_routes, sorted by key.
+ENTRIES = [
+    {"phone": PHONE, "key": "counter#visits", "value": 3, "ttl": 0},
+    {"phone": PHONE, "key": "invalid#boolean", "value": "c", "ttl": None},
+    {"phone": PHONE, "key": "invalid#null", "value": "b", "ttl": None},
+    {"phone": PHONE, "key": "invalid#string", "value": "a", "ttl": None},
+    {"phone": PHONE, "key": "missing#ttl", "value": "d", "ttl": None},
+    {"phone": PHONE, "key": "number#fractional", "value": 4, "ttl": 2.5},
+]
 
 
 @pytest.fixture
@@ -44,6 +55,11 @@ def state_routes(monkeypatch):
         )
         table = boto3.resource("dynamodb", region_name="us-east-1").Table(TABLE)
         table.put_item(Item={"pk": PHONE, "sk": "counter#visits", "data": json.dumps(3), "ttl": 0})
+        table.put_item(Item={"pk": PHONE, "sk": "invalid#boolean", "data": json.dumps("c"), "ttl": True})
+        table.put_item(Item={"pk": PHONE, "sk": "invalid#null", "data": json.dumps("b"), "ttl": None})
+        table.put_item(Item={"pk": PHONE, "sk": "invalid#string", "data": json.dumps("a"), "ttl": "never"})
+        table.put_item(Item={"pk": PHONE, "sk": "missing#ttl", "data": json.dumps("d")})
+        table.put_item(Item={"pk": PHONE, "sk": "number#fractional", "data": json.dumps(4), "ttl": Decimal("2.5")})
         table.put_item(Item={
             "pk": SCHEDULE_PK,
             "sk": "firing#2026-11-04T09:00:00Z",
@@ -58,12 +74,12 @@ def _body(resp) -> list:
     return json.loads(resp["body"])
 
 
-def test_stack_state_leaves_out_firing_records(state_routes):
+def test_stack_state_normalizes_ttls_and_leaves_out_firing_records(state_routes):
     entries = _body(state_routes.handle_get_state({"id": "bot-dev"}, {}))
-    assert entries == [{"phone": PHONE, "key": "counter#visits", "value": 3, "ttl": 0}]
+    assert sorted(entries, key=lambda entry: entry["key"]) == ENTRIES
 
 
-def test_global_state_leaves_out_firing_records(state_routes):
+def test_global_state_normalizes_ttls_and_leaves_out_firing_records(state_routes):
     entries = _body(state_routes.handle_list_all_state({}, {}))
-    assert entries == [{"phone": PHONE, "key": "counter#visits", "value": 3, "ttl": 0, "stack": "bot-dev"}]
+    assert sorted(entries, key=lambda entry: entry["key"]) == [{**entry, "stack": "bot-dev"} for entry in ENTRIES]
     assert {entry["phone"] for entry in entries} == {PHONE}

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import re
+from decimal import Decimal
 
 import boto3
 
@@ -37,6 +38,17 @@ _SCHEDULE_PK_PREFIX = "_schedule#"
 def _is_schedule_record(item: dict) -> bool:
     pk = item.get("pk", "")
     return isinstance(pk, str) and pk.startswith(_SCHEDULE_PK_PREFIX)
+
+
+def _state_ttl(item: dict) -> int | float | None:
+    """Return a JSON number for a DynamoDB Number TTL, otherwise null."""
+    ttl = item.get("ttl")
+    if isinstance(ttl, bool) or not isinstance(ttl, (int, float, Decimal)):
+        return None
+    if isinstance(ttl, Decimal):
+        return int(ttl) if ttl == ttl.to_integral_value() else float(ttl)
+    return ttl
+
 
 def handle_delete_state_key(params, body):
     """Delete a single key from the state table, phone and key from the JSON body.
@@ -97,7 +109,7 @@ def handle_get_state(params, _body):
                     "phone": item.get("pk", ""),
                     "key": item.get("sk", ""),
                     "value": value,
-                    "ttl": int(item.get("ttl", 0)),
+                    "ttl": _state_ttl(item),
                 })
             lek = resp.get("LastEvaluatedKey")
             if not lek:
@@ -136,7 +148,7 @@ def handle_list_all_state(_params, _body):
                         "phone": item.get("pk", ""),
                         "key": item.get("sk", ""),
                         "value": value,
-                        "ttl": int(item.get("ttl", 0)),
+                        "ttl": _state_ttl(item),
                         "stack": sid,
                     })
                 lek = resp.get("LastEvaluatedKey")
