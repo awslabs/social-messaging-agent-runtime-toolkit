@@ -471,6 +471,7 @@ def _mask_phone_source(path: Path) -> str:
         "mask_phone",
         "_PHONE_SHAPED",
         "_DIGIT_RUN",
+        "_KEPT_ID",
         "install_log_masking",
         "_move_exception",
         "_MASKING_MARKER",
@@ -1332,3 +1333,55 @@ def test_a_malformed_exc_info_does_not_raise_at_the_call_site(plain_factory, ins
     )
     assert record.getMessage() == "for +...0100"
     assert record.exc_info is None
+
+
+# ── the five-digit cut leaves ids alone (#229) ────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "mask", [mask_phone, runtime_mask_phone], ids=["lambda", "runtime"]
+)
+@pytest.mark.parametrize(
+    "text",
+    [
+        "send message_id=9d345678-bf2a-4172-bab1-9aaf4c12ce41",
+        "request 123e4567-e89b-12d3-a456-426614174000 failed",
+        "trace 1-67891234-abc123def4567890abcdef12 done",
+        "etag a1b2c3d4e5f67890123456 ok",
+    ],
+    ids=["issue-example", "all-digit-uuid-group", "xray-trace-id", "hex-token"],
+)
+def test_the_cut_leaves_a_uuid_or_hex_token_whole(mask, text):
+    assert mask(text) == text
+
+
+@pytest.mark.parametrize(
+    "mask", [mask_phone, runtime_mask_phone], ids=["lambda", "runtime"]
+)
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        (f"recipient {PHONE} unknown", "recipient +...0100 unknown"),
+        (f"no actor {DIGITS}", "no actor ...0100"),
+        (
+            "whatsapp-session-conversation-525555550100",
+            "whatsapp-session-conversation-...0100",
+        ),
+        ("sa-dev-525555550100-reminder-ab12", "sa-dev-...0100-reminder-ab12"),
+        (
+            "arn:aws:sts::123456789012:assumed-role/x",
+            "arn:aws:sts::...9012:assumed-role/x",
+        ),
+        (f"to={DIGITS},cc={DIGITS}", "to=...0100,cc=...0100"),
+    ],
+    ids=[
+        "e164",
+        "bare-digits",
+        "session-id",
+        "schedule-id",
+        "arn-account",
+        "punctuation",
+    ],
+)
+def test_the_cut_still_masks_a_number_beside_punctuation(mask, text, expected):
+    assert mask(text) == expected

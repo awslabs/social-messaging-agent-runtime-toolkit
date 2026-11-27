@@ -45,8 +45,15 @@ def session_id_for_phone(phone: str) -> str:
 
 # A value that is nothing but a phone number, in any common format.
 _PHONE_SHAPED = re.compile(r"\+?[\d\s().-]*")
-# A run of 5+ digits: a phone number inside an id built from one.
-_DIGIT_RUN = re.compile(r"\d{5,}")
+# A run of 5+ digits: a phone number inside an id built from one. One that
+# touches a letter or a digit is part of a token, such as a hex id, not a number.
+_DIGIT_RUN = re.compile(r"(?<![0-9A-Za-z])\d{5,}(?![0-9A-Za-z])")
+# Ids whose digit groups can stand alone between hyphens: a UUID and an X-Ray
+# trace id. A run inside one is left as it is, so the id still matches.
+_KEPT_ID = re.compile(
+    r"\b[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\b"
+    r"|\b1-[0-9a-fA-F]{8}-[0-9a-fA-F]{24}\b"
+)
 
 
 def mask_phone(value: str | None) -> str:
@@ -60,7 +67,9 @@ def mask_phone(value: str | None) -> str:
 
     A value that is only a phone number, however it is formatted, keeps its
     ``+`` and its last four digits. In anything else (a session or actor id, a
-    schedule name) each run of five or more digits is cut to its last four.
+    schedule name) each run of five or more digits is cut to its last four,
+    unless it touches a letter or a digit (part of a token such as a hex id)
+    or lies inside a UUID or an X-Ray trace id, so those ids still match.
     Never raises, so it is safe inside a logging call.
 
     The Lambda Control Layer (``socialagent.utils.phone``) and the Agent Runtime
@@ -76,7 +85,14 @@ def mask_phone(value: str | None) -> str:
     digits = re.sub(r"\D", "", text)
     if len(digits) >= 5 and _PHONE_SHAPED.fullmatch(text):
         return ("+" if text.startswith("+") else "") + "..." + digits[-4:]
-    return _DIGIT_RUN.sub(lambda m: "..." + m.group()[-4:], text)
+    kept = [m.span() for m in _KEPT_ID.finditer(text)]
+
+    def cut(m: re.Match) -> str:
+        if any(start <= m.start() and m.end() <= end for start, end in kept):
+            return m.group()
+        return "..." + m.group()[-4:]
+
+    return _DIGIT_RUN.sub(cut, text)
 
 
 def _move_exception(record: logging.LogRecord) -> None:
