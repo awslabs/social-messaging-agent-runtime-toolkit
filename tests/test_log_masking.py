@@ -1385,3 +1385,18 @@ def test_the_cut_leaves_a_uuid_or_hex_token_whole(mask, text):
 )
 def test_the_cut_still_masks_a_number_beside_punctuation(mask, text, expected):
     assert mask(text) == expected
+
+
+@pytest.mark.parametrize(
+    "mask", [mask_phone, runtime_mask_phone], ids=["lambda", "runtime"]
+)
+@pytest.mark.parametrize(
+    "text",
+    [f"user{DIGITS}", f"{DIGITS}x", f"{PHONE}abc"],
+    ids=["letter-before", "letter-after", "e164-letter-after"],
+)
+def test_a_number_against_a_letter_is_left_whole(mask, text):
+    """The price of leaving hex ids whole, recorded under M6 in
+    docs/threat-model.md: a number written directly against a letter is not
+    cut. A change here changes that trade-off, so change the docs with it."""
+    assert mask(text) == text

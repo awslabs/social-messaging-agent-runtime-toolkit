@@ -46,7 +46,7 @@ def session_id_for_phone(phone: str) -> str:
 # A value that is nothing but a phone number, in any common format.
 _PHONE_SHAPED = re.compile(r"\+?[\d\s().-]*")
 # A run of 5+ digits: a phone number inside an id built from one. One that
-# touches a letter or a digit is part of a token, such as a hex id, not a number.
+# touches a letter is part of a token, such as a hex id, not a number.
 _DIGIT_RUN = re.compile(r"(?<![0-9A-Za-z])\d{5,}(?![0-9A-Za-z])")
 # Ids whose digit groups can stand alone between hyphens: a UUID and an X-Ray
 # trace id. A run inside one is left as it is, so the id still matches.
@@ -68,8 +68,8 @@ def mask_phone(value: str | None) -> str:
     A value that is only a phone number, however it is formatted, keeps its
     ``+`` and its last four digits. In anything else (a session or actor id, a
     schedule name) each run of five or more digits is cut to its last four,
-    unless it touches a letter or a digit (part of a token such as a hex id)
-    or lies inside a UUID or an X-Ray trace id, so those ids still match.
+    unless it touches a letter (part of a token such as a hex id) or lies
+    inside a UUID or an X-Ray trace id, so those ids still match.
     Never raises, so it is safe inside a logging call.
 
     The Lambda Control Layer (``socialagent.utils.phone``) and the Agent Runtime
