@@ -142,6 +142,8 @@ await notify.send_message(phone, messages.document("https://example.com/brochure
 
 The same builders (`image`, `document`, `video`, `location`, etc.) are available from `socialagent.messages` (handler side) and `socialagent_runtime.messages` (agent side).
 
+Native WhatsApp product messages use a different path: see [Sync a Meta Commerce catalog for WhatsApp](meta-commerce-catalog.md) for a project-owned feed and catalog setup.
+
 ### Media stored in S3
 
 WhatsApp cannot fetch S3 presigned URLs, so media in S3 is uploaded to WhatsApp and sent by `media_id`. From the agent, `notify.upload_media(bucket, key)` returns the `media_id`; a queued message whose `link` is an S3 object URL is uploaded the same way when the webhook sends it. Either way the object must be in the stack's media bucket, under `voice/`, `images/` or `media/` (beneath `MEDIA_PREFIX` on a shared bucket). Any other bucket or key, or one containing `..`, is refused and logged, and nothing is uploaded. A queued message whose upload is refused or fails still goes out with its link, which WhatsApp cannot fetch from a private bucket, so it does not count as a reply: a turn that ends with no text and queued nothing else gets the `generic` error message. The webhook cannot tell a public bucket from a private one, so it counts every S3 object link this way; serve public media by an `https` URL that is not an S3 object URL, such as a CloudFront one, which counts as sent. The agent runtime's role can write only under `voice/` and `images/`, which is where the `voice-reply` and `generate-image` recipes put their files.
