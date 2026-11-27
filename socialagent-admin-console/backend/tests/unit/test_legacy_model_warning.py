@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """Stack Detail warns only when the webhook's MODEL_ID is LEGACY."""
+
 from __future__ import annotations
 
 import json
@@ -52,7 +53,11 @@ def stacks(monkeypatch):
 def aws(stacks, monkeypatch):
     lam = _lambda("us.anthropic.claude-haiku-5-5")
     bedrock = MagicMock()
-    factory = MagicMock(side_effect=lambda service, region, config: {"lambda": lam, "bedrock": bedrock}[service])
+    factory = MagicMock(
+        side_effect=lambda service, region, config: {"lambda": lam, "bedrock": bedrock}[
+            service
+        ]
+    )
     monkeypatch.setattr(stacks, "client", factory)
     return lam, bedrock, factory
 
@@ -63,7 +68,8 @@ def test_legacy_inference_profile_resolves_the_foundation_model(stacks, aws, reg
     west = "arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-haiku-5-5"
     east = "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-haiku-5-5"
     bedrock.get_inference_profile.return_value = {
-        "status": "ACTIVE", "models": [{"modelArn": west}, {"modelArn": east}],
+        "status": "ACTIVE",
+        "models": [{"modelArn": west}, {"modelArn": east}],
     }
     bedrock.get_foundation_model.return_value = {
         "modelDetails": {"modelLifecycle": {"status": "LEGACY"}}
@@ -74,9 +80,15 @@ def test_legacy_inference_profile_resolves_the_foundation_model(stacks, aws, reg
     assert fields["modelLifecycle"] == "LEGACY"
     assert fields["modelId"] == "us.anthropic.claude-haiku-5-5"
     assert fields["modelDocsUrl"].endswith("docs/configuration.md#model")
-    lam.get_function_configuration.assert_called_once_with(FunctionName="bot-dev-webhook")
-    bedrock.get_inference_profile.assert_called_once_with(inferenceProfileIdentifier=fields["modelId"])
-    bedrock.get_foundation_model.assert_called_once_with(modelIdentifier=east if region == "us-east-1" else west)
+    lam.get_function_configuration.assert_called_once_with(
+        FunctionName="bot-dev-webhook"
+    )
+    bedrock.get_inference_profile.assert_called_once_with(
+        inferenceProfileIdentifier=fields["modelId"]
+    )
+    bedrock.get_foundation_model.assert_called_once_with(
+        modelIdentifier=east if region == "us-east-1" else west
+    )
     config = stacks._MODEL_READ_CONFIG
     expected_clients = [call("lambda", region, config), call("bedrock", region, config)]
     if region == "us-east-2":
@@ -86,10 +98,17 @@ def test_legacy_inference_profile_resolves_the_foundation_model(stacks, aws, reg
     assert config.connect_timeout + config.read_timeout <= 3
 
 
-@pytest.mark.parametrize("models", [
-    [],
-    [{}, {"modelArn": "malformed"}, {"modelArn": "arn:aws:bedrock:::foundation-model/example"}],
-])
+@pytest.mark.parametrize(
+    "models",
+    [
+        [],
+        [
+            {},
+            {"modelArn": "malformed"},
+            {"modelArn": "arn:aws:bedrock:::foundation-model/example"},
+        ],
+    ],
+)
 def test_profile_with_no_usable_destination_skips_foundation_model(stacks, aws, models):
     _, bedrock, _ = aws
     bedrock.get_inference_profile.return_value = {"models": models}
@@ -101,7 +120,9 @@ def test_profile_with_no_usable_destination_skips_foundation_model(stacks, aws, 
 def test_active_direct_model_adds_no_fields(stacks, aws):
     lam, bedrock, _ = aws
     model_id = "anthropic.claude-haiku-5-5"
-    lam.get_function_configuration.return_value = {"Environment": {"Variables": {"MODEL_ID": model_id}}}
+    lam.get_function_configuration.return_value = {
+        "Environment": {"Variables": {"MODEL_ID": model_id}}
+    }
     bedrock.get_inference_profile.side_effect = _not_found("GetInferenceProfile")
     bedrock.get_foundation_model.return_value = {
         "modelDetails": {"modelLifecycle": {"status": "ACTIVE"}}
@@ -113,16 +134,26 @@ def test_active_direct_model_adds_no_fields(stacks, aws):
 
 def test_missing_model_id_adds_no_fields_and_skips_bedrock(stacks, aws):
     lam, bedrock, _ = aws
-    lam.get_function_configuration.return_value = {"Environment": {"Variables": {"MODEL_ID": ""}}}
+    lam.get_function_configuration.return_value = {
+        "Environment": {"Variables": {"MODEL_ID": ""}}
+    }
 
     assert stacks._legacy_model_fields(CONFIG) == {}
     bedrock.get_foundation_model.assert_not_called()
     bedrock.get_inference_profile.assert_not_called()
 
 
-@pytest.mark.parametrize("operation", ["get_function_configuration", "get_inference_profile", "get_foundation_model"])
-@pytest.mark.parametrize("error", [_denied(), EndpointConnectionError(endpoint_url="https://example.invalid")])
-def test_unreadable_model_logs_one_warning_and_returns_stack(stacks, monkeypatch, aws, operation, error):
+@pytest.mark.parametrize(
+    "operation",
+    ["get_function_configuration", "get_inference_profile", "get_foundation_model"],
+)
+@pytest.mark.parametrize(
+    "error",
+    [_denied(), EndpointConnectionError(endpoint_url="https://example.invalid")],
+)
+def test_unreadable_model_logs_one_warning_and_returns_stack(
+    stacks, monkeypatch, aws, operation, error
+):
     lam, bedrock, _ = aws
     bedrock.get_inference_profile.side_effect = _not_found("GetInferenceProfile")
     reader = lam if operation == "get_function_configuration" else bedrock
@@ -136,18 +167,36 @@ def test_unreadable_model_logs_one_warning_and_returns_stack(stacks, monkeypatch
 
     assert detail["statusCode"] == 200
     assert json.loads(detail["body"]) == {"health": "healthy"}
-    reason = "AccessDeniedException" if isinstance(error, ClientError) else "EndpointConnectionError"
-    warning.assert_called_once_with("model_lifecycle_unreadable", extra={"reason": reason})
+    reason = (
+        "AccessDeniedException"
+        if isinstance(error, ClientError)
+        else "EndpointConnectionError"
+    )
+    warning.assert_called_once_with(
+        "model_lifecycle_unreadable", extra={"reason": reason}
+    )
     if operation != "get_foundation_model":
         bedrock.get_foundation_model.assert_not_called()
     if operation == "get_function_configuration":
         bedrock.get_inference_profile.assert_not_called()
 
 
-@pytest.mark.parametrize("response", [{}, {"Error": {}}, {"Error": {"Message": "no code"}}])
-def test_client_error_without_a_code_still_returns_stack(stacks, monkeypatch, aws, response):
+@pytest.mark.parametrize(
+    "response", [{}, {"Error": {}}, {"Error": {"Message": "no code"}}]
+)
+@pytest.mark.parametrize(
+    "operation", ["GetFunctionConfiguration", "GetInferenceProfile"]
+)
+def test_client_error_without_a_code_still_returns_stack(
+    stacks, monkeypatch, aws, response, operation
+):
     lam, bedrock, _ = aws
-    lam.get_function_configuration.side_effect = ClientError(response, "GetFunctionConfiguration")
+    read = (
+        lam.get_function_configuration
+        if operation == "GetFunctionConfiguration"
+        else bedrock.get_inference_profile
+    )
+    read.side_effect = ClientError(response, operation)
     monkeypatch.setattr(stacks, "_get_registry", lambda _id: CONFIG)
     monkeypatch.setattr(stacks, "_stack_status", lambda _config: {"health": "healthy"})
     warning = MagicMock()
@@ -157,8 +206,13 @@ def test_client_error_without_a_code_still_returns_stack(stacks, monkeypatch, aw
 
     assert detail["statusCode"] == 200
     assert json.loads(detail["body"]) == {"health": "healthy"}
-    warning.assert_called_once_with("model_lifecycle_unreadable", extra={"reason": "ClientError"})
-    bedrock.get_inference_profile.assert_not_called()
+    warning.assert_called_once_with(
+        "model_lifecycle_unreadable", extra={"reason": "ClientError"}
+    )
+    if operation == "GetFunctionConfiguration":
+        bedrock.get_inference_profile.assert_not_called()
+    else:
+        bedrock.get_inference_profile.assert_called_once()
     bedrock.get_foundation_model.assert_not_called()
 
 
