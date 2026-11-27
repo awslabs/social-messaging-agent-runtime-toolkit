@@ -310,10 +310,13 @@ def _fit_name(name: str, prefix: str) -> str:
     every time, which ``cancel`` relies on:
 
     - ``{prefix}-{label}-{digits}`` keeps its digits last after a shortened
-      label and a letters-only hash, since every field before the digits must
-      be letters for the owner to be read.
+      label and the hash, since every field before the digits must be letters
+      for the owner to be read.
     - Any other name, ``{prefix}-{digits}-...`` included, keeps its start, cut
       on the right, and ends in the hash.
+
+    The hash is spelt in letters (a-p for each hex digit): a hex hash can be
+    all digits, and as the last field it would read as an owner's digits.
 
     Raises ``ValueError`` rather than return a name whose owner changed, so a
     shortened name can never be read as another user's.
@@ -321,19 +324,16 @@ def _fit_name(name: str, prefix: str) -> str:
     if len(name) <= _MAX_NAME:
         return name
     digest = hashlib.sha256(name.encode()).hexdigest()
+    letters = "".join(chr(ord("a") + int(c, 16)) for c in digest[:_HASH_LEN])
     owner = _schedule_owner(name, prefix)
     head = f"{prefix}-" if prefix else ""
     rest = name[len(head) :]
     if owner and not rest.startswith(f"{owner}-"):
-        # {label}-{digits}: the hash spelt in letters (a-p for each hex digit).
-        letters = "".join(chr(ord("a") + int(c, 16)) for c in digest[:_HASH_LEN])
         room = _MAX_NAME - len(head) - len(letters) - len(owner) - 2
         label = rest[: -(len(owner) + 1)][: max(room, 0)].strip("-")
         fitted = head + "-".join(f for f in (label, letters, owner) if f)
     else:
-        fitted = (
-            name[: _MAX_NAME - _HASH_LEN - 1].rstrip("-") + "-" + digest[:_HASH_LEN]
-        )
+        fitted = name[: _MAX_NAME - _HASH_LEN - 1].rstrip("-") + "-" + letters
     if len(fitted) > _MAX_NAME or _schedule_owner(fitted, prefix) != owner:
         raise ValueError(
             f"schedule name is longer than {_MAX_NAME} characters and cannot be "

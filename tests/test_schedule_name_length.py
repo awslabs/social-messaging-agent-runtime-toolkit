@@ -6,9 +6,8 @@
 The runtime names a schedule ``{prefix}-{schedule id}``, the prefix being
 ``{env}-{project}``, and ``CreateSchedule`` rejects a name over 64 characters:
 with ``prod``, a long project name and a 12-digit phone, a reminder or task was
-never created. A long name is now shortened with a hash, the way the Lambda side
-shortens its own, while the owner's digits stay where ``_schedule_owner`` reads
-them: leading (``{digits}-{operation}-{hash}``) or trailing a letters-only label
+never created. A long name is now shortened with a hash of the whole name,
+while the owner's digits stay where ``_schedule_owner`` reads them: leading (``{digits}-{operation}-{hash}``) or trailing a letters-only label
 (``reminder-{digits}``).
 """
 
@@ -27,8 +26,9 @@ if _AGENT_PATH not in sys.path:
 import scheduler as sched  # noqa: E402
 
 LIMIT = 64
-# The longest prefix a stack can have: the longest environment and a project
-# name of 35 characters, the most infra-terraform/variables.tf allows.
+# At least the longest prefix a stack can have: the longest environment and a
+# project name of 35 characters, which infra-terraform/variables.tf never
+# exceeds.
 LONGEST_PREFIX = "prod-" + "p" * 35
 # E.164 allows at most 15 digits.
 LONGEST_DIGITS = "5" * 15
@@ -104,3 +104,32 @@ def test_a_name_whose_owner_would_be_cut_is_refused():
     refusing keeps every name's owner what the id said."""
     with pytest.raises(ValueError, match="without losing its owner"):
         sched._schedule_name("9" * 30 + "-reminder")
+
+
+def _ownerless_ids(count: int = 400) -> list[str]:
+    # Letters only, so the hash is the one place a digit could come from.
+    return [
+        "order-" + "".join(chr(ord("a") + int(c)) for c in f"{i:070d}")
+        for i in range(count)
+    ]
+
+
+def test_no_long_name_without_an_owner_gains_one():
+    """A hex hash is all digits for about 1 in 27 names, and as the last field
+    it read as an owner: the name was refused as if it had lost one."""
+    for schedule_id in _ownerless_ids():
+        name = sched._schedule_name(schedule_id)
+        assert len(name) <= LIMIT, name
+        assert sched._schedule_owner(name) == "", name
+
+
+async def test_cancel_refuses_a_long_id_with_no_owner_without_raising(
+    monkeypatch, caplog
+):
+    class Deployed(_Config):
+        is_dev_mode = False
+
+    monkeypatch.setattr(sched, "config", Deployed())
+    for schedule_id in _ownerless_ids(100):
+        await sched.cancel(schedule_id, "+525555550100")
+    assert caplog.text.count("cancel: refused") == 100
