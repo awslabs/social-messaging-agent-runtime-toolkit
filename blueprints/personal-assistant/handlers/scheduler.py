@@ -129,12 +129,13 @@ async def handle_invoke_agent(data: dict, ctx: EventContext) -> None:
     session_id = f"scheduled-task-{digits}-scheduled-{schedule_id}"
     actor_id = digits
     memory_id = os.environ.get("MEMORY_ID", "")
+    # The user turn is the task alone. The agent adds the rules for a scheduled
+    # task to its system prompt (agent.py), which a Bedrock guardrail does not
+    # evaluate: in the user turn, the stack guardrail's prompt-attack filter
+    # scored those rules as an attempt to override instructions and blocked
+    # every task.
     payload = {
-        "prompt": (
-            "Respond in the same language as this task description, in text only: "
-            "voice notes, images and interactive messages are not delivered from a "
-            f"scheduled task. Task: {prompt}"
-        ),
+        "prompt": prompt,
         "phone": phone,
         "socialagent": {
             "version": 1,
