@@ -86,35 +86,6 @@ global_settings:
       path: "tests/test_event_api_authorizer.py"
       reason: "[TEST FIXTURE] Fake webhook secret and secret ARN fed to the event API authorizer through a stubbed Secrets Manager client; no real credential"
 
-    # === npm-audit ===
-    # GHSA-fc5q-39xc-vjpf (picomatch <= 4.0.7, ReDoS through attacker-supplied
-    # extglob patterns) has no patched release yet. In the admin console's
-    # package-lock.json, picomatch and the four packages flagged through it
-    # (fdir, tinyglobby, vite, vitest) are dev-only build and test tooling that
-    # match only the project's own glob patterns, and none of them ships in the
-    # built console. Each entry expires, so the findings return if nothing has
-    # changed by then; remove them once a patched picomatch is in the lockfile.
-    - rule_id: GHSA-fc5q-39xc-vjpf
-      path: "node_modules/picomatch/package.json"
-      reason: "[ACCEPTED RISK (dev only)] No patched picomatch exists yet; it is a dev-only dependency of the admin console's Vite/Vitest toolchain, matches only the project's own globs, and is not in the built console."
-      expiration: "2026-12-31"
-    - rule_id: npm-audit-transitive-fdir
-      path: "node_modules/fdir/package.json"
-      reason: "[ACCEPTED RISK (dev only)] Flagged only through picomatch GHSA-fc5q-39xc-vjpf (see above); dev-only, not in the built console."
-      expiration: "2026-12-31"
-    - rule_id: npm-audit-transitive-tinyglobby
-      path: "node_modules/tinyglobby/package.json"
-      reason: "[ACCEPTED RISK (dev only)] Flagged only through picomatch GHSA-fc5q-39xc-vjpf (see above); dev-only, not in the built console."
-      expiration: "2026-12-31"
-    - rule_id: npm-audit-transitive-vite
-      path: "node_modules/vite/package.json"
-      reason: "[ACCEPTED RISK (dev only)] Flagged only through picomatch GHSA-fc5q-39xc-vjpf (see above); Vite is the console's dev server and bundler, not part of the built console."
-      expiration: "2026-12-31"
-    - rule_id: npm-audit-transitive-vitest
-      path: "node_modules/vitest/package.json"
-      reason: "[ACCEPTED RISK (dev only)] Flagged only through picomatch GHSA-fc5q-39xc-vjpf (see above); Vitest is the console's test runner, not part of the built console."
-      expiration: "2026-12-31"
-
     # === semgrep / opengrep (both run the same registry rules, so one entry covers both) ===
     # ASH runs them with p/ci, which raises none of these. The entries cover the
     # wider registry packs (p/default, p/python, p/terraform, p/react) a reviewer
