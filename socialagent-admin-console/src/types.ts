@@ -63,6 +63,10 @@ export interface StackStatus {
   messages24h: number;  // webhook invocations less the console's probes; WhatsApp receipts invoke it too
   lastDeploy: string;
   lambdas: LambdaMetrics[];
+  /** Present on Stack Detail when the webhook's MODEL_ID is in the LEGACY lifecycle. */
+  modelId?: string;
+  modelLifecycle?: "LEGACY";
+  modelDocsUrl?: string;
 }
 
 /** Conversation from AgentCore Memory. */

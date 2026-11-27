@@ -424,6 +424,16 @@ resource "aws_iam_role_policy" "backend" {
         Resource = "arn:aws:bedrock-agentcore:*:*:runtime/*"
       },
       {
+        Sid    = "BedrockModelLifecycle"
+        Effect = "Allow"
+        Action = ["bedrock:GetFoundationModel", "bedrock:GetInferenceProfile"]
+        Resource = [
+          "arn:aws:bedrock:*::foundation-model/*",
+          "arn:aws:bedrock:*:${data.aws_caller_identity.current.account_id}:inference-profile/*",
+          "arn:aws:bedrock:*:${data.aws_caller_identity.current.account_id}:application-inference-profile/*",
+        ]
+      },
+      {
         Sid      = "PassRoleForRuntime"
         Effect   = "Allow"
         Action   = ["iam:PassRole"]

@@ -16,6 +16,7 @@ from typing import NamedTuple
 import boto3
 from aws_lambda_powertools import Logger, Tracer
 from boto3.dynamodb.conditions import Key
+from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 
 from shared.auth import require_group
@@ -565,11 +566,80 @@ def handle_get_metrics(params, _body):
     return _json(200, metrics)
 
 
+
+_MODEL_DOCS_URL = (
+    "https://github.com/awslabs/social-messaging-agent-runtime-toolkit/"
+    "blob/main/docs/configuration.md#model"
+)
+_NOT_FOUND_CODES = ("ResourceNotFoundException", "ValidationException")
+
+
+# Stack Detail waits for these optional reads. A profile takes up to three
+# requests, so don't spend the API's 30-second timeout on SDK retries.
+_MODEL_READ_CONFIG = Config(
+    retries={"total_max_attempts": 1, "mode": "standard"},
+    connect_timeout=1,
+    read_timeout=2,
+)
+
+
+def _foundation_lifecycle(model_id: str, region: str) -> str:
+    bedrock = client("bedrock", region, _MODEL_READ_CONFIG)
+    try:
+        profile = bedrock.get_inference_profile(inferenceProfileIdentifier=model_id)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") not in _NOT_FOUND_CODES:
+            raise
+        # A direct foundation model ID does not resolve as an inference profile.
+        identifier = model_id
+    else:
+        destinations = {}
+        for model in profile.get("models") or []:
+            arn = model.get("modelArn") or ""
+            parts = arn.split(":", 5)
+            if len(parts) == 6 and parts[0] == "arn" and parts[2] == "bedrock" and parts[3]:
+                destinations.setdefault(parts[3], arn)
+        if not destinations:
+            return ""
+        model_region = region if region in destinations else next(iter(destinations))
+        identifier = destinations[model_region]
+        if model_region != region:
+            bedrock = client("bedrock", model_region, _MODEL_READ_CONFIG)
+    model = bedrock.get_foundation_model(modelIdentifier=identifier)
+    return model.get("modelDetails", {}).get("modelLifecycle", {}).get("status", "")
+
+
+def _legacy_model_fields(config: dict) -> dict:
+    """Warn when the webhook explicitly sets MODEL_ID to a LEGACY model."""
+    webhook = (config.get("outputs") or {}).get("webhook_lambda")
+    if not webhook:
+        return {}
+    region = config.get("region") or REGION
+    try:
+        lam = client("lambda", region, _MODEL_READ_CONFIG)
+        fn = lam.get_function_configuration(FunctionName=webhook)
+        env = (fn.get("Environment") or {}).get("Variables") or {}
+        model_id = str(env.get("MODEL_ID") or "").strip()
+        if not model_id or _foundation_lifecycle(model_id, region) != "LEGACY":
+            return {}
+    except (ClientError, BotoCoreError) as exc:
+        reason = exc.response.get("Error", {}).get("Code", "ClientError") if isinstance(exc, ClientError) else type(exc).__name__
+        logger.warning("model_lifecycle_unreadable", extra={"reason": reason})
+        return {}
+    return {
+        "modelId": model_id,
+        "modelLifecycle": "LEGACY",
+        "modelDocsUrl": _MODEL_DOCS_URL,
+    }
+
+
 def handle_get_stack(params, _body):
     config = _get_registry(params["id"])
     if not config:
         return _json(404, {"error": f"Stack '{params['id']}' not found"})
-    return _json(200, _stack_status(config))
+    status = _stack_status(config)
+    status.update(_legacy_model_fields(config))
+    return _json(200, status)
 
 
 def handle_list_stacks(_params, _body):

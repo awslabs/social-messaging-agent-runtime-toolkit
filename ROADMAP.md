@@ -81,7 +81,7 @@ What runs inside AgentCore alongside the developer's agent.
 | Story | Release | Status | Gate | Issue | Tasks |
 |---|---|---|---|---|---|
 | A current Claude model as the blueprint default, configurable in `socialagent.<env>.yaml`; the model id is named only in `docs/configuration.md` so a change does not leave stale docs | 2026.10 | ✅ |  |  | — |
-| Warn in the console when the deployed model reaches `LEGACY` | 2027.1 | ⬜ |  | [#128](https://github.com/awslabs/social-messaging-agent-runtime-toolkit/issues/128) | `bedrock:GetFoundationModel` |
+| Warn in the console when the deployed model reaches `LEGACY` | 2026.12 | 🟢 |  | [#128](https://github.com/awslabs/social-messaging-agent-runtime-toolkit/issues/128) | `bedrock:GetFoundationModel` |
 | Token usage and estimated cost per stack | later | ⬜ |  | [#129](https://github.com/awslabs/social-messaging-agent-runtime-toolkit/issues/129) | Price List with a 24-hour cache and a fallback table |
 | Per-stack cost through application inference profiles | later | ⬜ |  |  |  |
 | Optional `MODEL_ID` for the handler Lambdas | later | ⬜ |  |  |  |
@@ -235,8 +235,8 @@ The same stories, by target. Generated from the tables above by `scripts/roadmap
 
 **2026.11**: Shipped: Reactions; Release workflow.
 
-**2026.12**: In progress: Two things ship differently; The CLI from PyPI. Not started: Auto-label pull requests by path; Review attention routed by what changed, not only where; Release playbook.
+**2026.12**: In review: Warn in the console when the deployed model reaches `LEGACY`. In progress: Two things ship differently; The CLI from PyPI. Not started: Auto-label pull requests by path; Review attention routed by what changed, not only where; Release playbook.
 
-**2027.1**: Not started: Warn in the console when the deployed model reaches `LEGACY`; `socialagent init` scaffolds into `./<name>`; `socialagent config import --from-stack`; Documentation site; Console route coverage; ASH results as a pull-request comment; Dependabot auto-merge; ASH as a scheduled full-repository scan; Dependency manifest; Documentation site tooling.
+**2027.1**: Not started: `socialagent init` scaffolds into `./<name>`; `socialagent config import --from-stack`; Documentation site; Console route coverage; ASH results as a pull-request comment; Dependabot auto-merge; ASH as a scheduled full-repository scan; Dependency manifest; Documentation site tooling.
 
 **Later**: Not started: Multi-message media batches; WhatsApp Flows; Contacts; Video and document persistence; Catalog and commerce; Template components; Carousel templates; Template analytics; Delivery status webhooks; Detect a WABA whose event destination points at a…; Wheel installs know their lineage without git; A reverted runtime reads as current, not earlier; Token usage and estimated cost per stack; Per-stack cost through application inference profiles; Optional `MODEL_ID` for the handler Lambdas; Delivery rate per stack; Console extensions; Analytics; Repository stats and quality metrics; Governance; `handoff`; Structured event bus; Channel adapters; Neutral default locale; Host contract v1; Extension loader; `socialagent extension` CLI; One reference extension, open source, end to end.

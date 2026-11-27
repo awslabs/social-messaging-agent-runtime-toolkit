@@ -7,7 +7,7 @@ import createWrapper from "@cloudscape-design/components/test-utils/dom";
 import StackDetailPage from "@/pages/stack-detail";
 import { api } from "@/api/client";
 import { ApiError } from "@/api/errors";
-import type { Conversation, Schedule } from "@/types";
+import type { Conversation, Schedule, StackStatus } from "@/types";
 
 function makeSchedule(name: string, stack: string): Schedule {
   return {
@@ -362,3 +362,37 @@ describe("Stack Detail", () => {
     });
   });
 });
+
+  describe("LEGACY model warning", () => {
+    let baseline: StackStatus;
+
+    beforeEach(async () => {
+      baseline = await api.getStack("test-dev");
+    });
+
+    afterEach(() => {
+      vi.mocked(api.getStack).mockResolvedValue(baseline);
+    });
+
+    it("shows a warning on the Status tab with a link to the model docs", async () => {
+      vi.mocked(api.getStack).mockResolvedValue({
+        ...baseline,
+        modelId: "anthropic.claude-haiku-5-5",
+        modelLifecycle: "LEGACY",
+        modelDocsUrl: "https://github.com/awslabs/social-messaging-agent-runtime-toolkit/blob/main/docs/configuration.md#model",
+      });
+
+      render(<StackDetailPage stackId="test-dev" navigate={() => {}} />);
+      await waitFor(() => {
+        expect(screen.getByText("The deployed model is LEGACY")).toBeInTheDocument();
+      });
+      const link = screen.getByRole("link", { name: /How to change the model/i });
+      expect(link).toHaveAttribute("href", "https://github.com/awslabs/social-messaging-agent-runtime-toolkit/blob/main/docs/configuration.md#model");
+    });
+
+    it("does not show the warning when the model is not LEGACY", async () => {
+      render(<StackDetailPage stackId="test-dev" navigate={() => {}} />);
+      await waitFor(() => { expect(screen.getByText("Lambda functions")).toBeInTheDocument(); });
+      expect(screen.queryByText("The deployed model is LEGACY")).not.toBeInTheDocument();
+    });
+  });

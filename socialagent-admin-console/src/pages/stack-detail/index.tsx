@@ -311,9 +311,18 @@ function StatusTab({ data }: { data: StackStatus }) {
     }
   };
 
+  const modelDocs = data.modelDocsUrl
+    ?? "https://github.com/awslabs/social-messaging-agent-runtime-toolkit/blob/main/docs/configuration.md#model";
+
   return (
     <SpaceBetween size="l">
       {flash.length > 0 && <Flashbar items={flash.map((f, i) => ({ ...f, id: String(i), dismissible: true, onDismiss: () => setFlash([]) }))} />}
+      {data.modelLifecycle === "LEGACY" && (
+        <Alert type="warning" header="The deployed model is LEGACY">
+          {data.modelId ? `${data.modelId} has` : "The stack's model has"} reached the LEGACY lifecycle. Plan a switch to an active model.{" "}
+          <Link href={modelDocs} external>How to change the model</Link>
+        </Alert>
+      )}
 
       {/* Lambda restart confirmation */}
       <Modal visible={!!confirmLambda} onDismiss={() => setConfirmLambda(null)}

@@ -3,7 +3,7 @@
 
 """Cached boto3 client factory with adaptive retries.
 
-Clients are keyed by (service_name, region). Cache survives for the
+Clients are keyed by service, Region and configuration. Cache survives for the
 lifetime of the Lambda container, avoiding the ~100-300ms cost of
 creating a new client per request.
 
@@ -28,9 +28,9 @@ _DEFAULT_CONFIG = Config(
 
 
 @lru_cache(maxsize=None)
-def client(service: str, region: str) -> BaseClient:
-    """Return a cached boto3 client for (service, region)."""
-    return boto3.client(service, region_name=region, config=_DEFAULT_CONFIG)
+def client(service: str, region: str, config: Config = _DEFAULT_CONFIG) -> BaseClient:
+    """Return a cached boto3 client for the service, Region and configuration."""
+    return boto3.client(service, region_name=region, config=config)
 
 
 def clear_client_cache() -> None:
