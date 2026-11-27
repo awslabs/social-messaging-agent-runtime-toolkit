@@ -77,13 +77,26 @@ const MAX_TEMPLATE_LOOKUPS = 10;
 
 /** A fetched template's detail, or null when the fetch failed (a 404 included).
  * A name absent from the map was not fetched: it is past MAX_TEMPLATE_LOOKUPS, or
- * was sent from the composer after the conversation opened. */
+ * was sent from the composer after the conversation opened (that row carries its
+ * own `sentBody`). */
 type TemplateLookups = ReadonlyMap<string, TemplateDetail | null>;
 
-function formatTemplateMessage(text: string, details: TemplateLookups): string {
+/** A transcript row. `sentBody` is set only on a template sent from the composer:
+ * the body the operator previewed, parameters filled in, which the row shows
+ * since no lookup was made for it. */
+type TranscriptMessage = ConversationMessage & { sentBody?: string };
+
+/** A template body with each {{n}} replaced by its parameter; an empty parameter
+ * leaves the placeholder. */
+function fillTemplate(body: string, params: string[]): string {
+  return body.replace(/\{\{(\d+)\}\}/g, (_m, n) => params[parseInt(n) - 1] || `{{${n}}}`);
+}
+
+function formatTemplateMessage(text: string, details: TemplateLookups, sentBody?: string): string {
   const name = templateNameOf(text);
   if (!name) return formatWhatsApp(text);
   const safeName = escapeHtml(name);
+  if (sentBody) return `📋 <em style="opacity:0.7">${safeName}</em><br/><br/>${formatWhatsApp(sentBody)}`;
   const note = (what: string) => `📋 <em>${safeName}</em> <span style="opacity:0.5">(${what})</span>`;
   if (!details.has(name)) return note("template body not fetched");
   const body = details.get(name)?.components.find((c) => c.type === "BODY");
@@ -110,7 +123,7 @@ export function ConversationDetailModal(props: Props) {
 }
 
 function ConversationViewer({ visible, onDismiss, stackId, phoneHash, fullPhone, onDelete }: Props) {
-  const [allMessages, setAllMessages] = useState<ConversationMessage[]>([]);
+  const [allMessages, setAllMessages] = useState<TranscriptMessage[]>([]);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [loading, setLoading] = useState(true);
   // A failed read and one that stopped short are not an empty conversation, so
@@ -226,7 +239,9 @@ function ConversationViewer({ visible, onDismiss, stackId, phoneHash, fullPhone,
       setSending(true);
       try {
         await api.sendTemplateMessage(stackId, fullPhone, selectedTpl, tplDetail?.language || "en", tplParams);
-        setAllMessages((prev) => [...prev, { role: "assistant", content: `[Template: ${selectedTpl}]`, timestamp: new Date().toISOString() }]);
+        const body = tplDetail?.name === selectedTpl ? tplDetail.components.find((c) => c.type === "BODY")?.text : undefined;
+        const sentBody = body ? fillTemplate(body, tplParams) : undefined;
+        setAllMessages((prev) => [...prev, { role: "assistant", content: `[Template: ${selectedTpl}]`, timestamp: new Date().toISOString(), sentBody }]);
         setSelectedTpl("");
         setTplParams([]);
         setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
@@ -341,7 +356,7 @@ function ConversationViewer({ visible, onDismiss, stackId, phoneHash, fullPhone,
                     </div>
                   )}
                   <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}
-                    dangerouslySetInnerHTML={{ __html: isTemplate ? formatTemplateMessage(m.content, templateDetails) : formatWhatsApp(m.content) }}
+                    dangerouslySetInnerHTML={{ __html: isTemplate ? formatTemplateMessage(m.content, templateDetails, m.sentBody) : formatWhatsApp(m.content) }}
                   />
                   <div style={{ fontSize: "11px", opacity: 0.6, marginTop: "4px", textAlign: isUser ? "right" : "left" }}>
                     {formatTime(m.timestamp)}
@@ -394,7 +409,7 @@ function ConversationViewer({ visible, onDismiss, stackId, phoneHash, fullPhone,
               {tplDetail && (
                 <div style={{ background: "#1a1d21", borderRadius: "8px", padding: "10px", maxWidth: "320px" }}>
                   <div style={{ background: "#2a2e33", borderRadius: "8px 8px 8px 4px", padding: "8px 10px", color: "#fff", fontSize: "13px", lineHeight: "1.5" }}>
-                    {tplDetail.components.find((c) => c.type === "BODY")?.text?.replace(/\{\{(\d+)\}\}/g, (_m, n) => tplParams[parseInt(n) - 1] || `{{${n}}}`) || ""}
+                    {fillTemplate(tplDetail.components.find((c) => c.type === "BODY")?.text || "", tplParams)}
                     {tplDetail.status !== "approved" && <div style={{ color: "#f0ad4e", fontSize: "11px", marginTop: "4px" }}>⚠️ {tplDetail.status} — may not deliver</div>}
                   </div>
                 </div>

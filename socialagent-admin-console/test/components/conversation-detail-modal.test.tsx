@@ -244,6 +244,52 @@ describe("ConversationDetailModal reply composer", () => {
     expect(api.sendTemplateMessage).not.toHaveBeenCalled();
   });
 
+  it("shows the body of a template it has just sent, with the parameters filled in", async () => {
+    // The row used to read "(template body not fetched)": the open-time lookups
+    // do not cover a template sent afterwards, though the preview had its body.
+    vi.mocked(api.getConversationMessages).mockResolvedValue(userMessages("Hi"));
+    vi.mocked(api.getTemplates).mockResolvedValue([listed("dev_bot_order", "bot-dev")]);
+    vi.mocked(api.getTemplateDetail).mockResolvedValue(template("dev_bot_order", "Order {{1}} ships on {{2}}"));
+    render(viewer("bot-dev"));
+    fireEvent.click(await screen.findByRole("button", { name: "Template" }));
+    await screen.findByRole("option", { name: "dev_bot_order (UTILITY)" });
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "dev_bot_order" } });
+    fireEvent.change(await screen.findByPlaceholderText("Parameter {{1}}"), { target: { value: "A-42" } });
+    fireEvent.change(screen.getByPlaceholderText("Parameter {{2}}"), { target: { value: "<b>Friday</b>" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send template" }));
+
+    await screen.findByText("2 messages");
+    expect(api.sendTemplateMessage).toHaveBeenCalledWith("bot-dev", "15555550100", "dev_bot_order", "en", ["A-42", "<b>Friday</b>"]);
+    const [badge] = templateBadges();
+    const row = badge.parentElement!.parentElement!;
+    // A parameter is operator text: escaped like any other transcript text.
+    expect(row).toHaveTextContent("dev_bot_orderOrder A-42 ships on <b>Friday</b>");
+    expect(row.querySelector("b")).toBeNull();
+    expect(screen.queryByText(/template body not fetched/)).not.toBeInTheDocument();
+  });
+
+  it("does not label a sent template with the previous template's body", async () => {
+    // Sending before the newly picked template's detail arrives must not reuse
+    // the detail of the template picked before it.
+    vi.mocked(api.getConversationMessages).mockResolvedValue(userMessages("Hi"));
+    vi.mocked(api.getTemplates).mockResolvedValue([listed("dev_bot_order", "bot-dev"), listed("dev_bot_hello", "bot-dev")]);
+    vi.mocked(api.getTemplateDetail).mockImplementation((_stackId, name) =>
+      name === "dev_bot_order" ? Promise.resolve(template("dev_bot_order", "Your order shipped")) : new Promise(() => {}));
+    render(viewer("bot-dev"));
+    fireEvent.click(await screen.findByRole("button", { name: "Template" }));
+    await screen.findByRole("option", { name: "dev_bot_order (UTILITY)" });
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "dev_bot_order" } });
+    await screen.findByText("Your order shipped");
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "dev_bot_hello" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send template" }));
+
+    await screen.findByText("2 messages");
+    const [badge] = templateBadges();
+    const row = badge.parentElement!.parentElement!;
+    expect(row).toHaveTextContent("dev_bot_hello");
+    expect(row).not.toHaveTextContent("Your order shipped");
+  });
+
   it("starts with an empty draft in another conversation", async () => {
     vi.mocked(api.getConversationMessages).mockResolvedValue(userMessages("Hi"));
     const { rerender } = render(viewer("bot-dev"));
