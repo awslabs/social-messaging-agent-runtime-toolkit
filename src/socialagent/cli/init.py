@@ -28,7 +28,7 @@ from socialagent.cli.blueprints import (
 # on the project — into an error before anything is created. It also rules out
 # path components such as `../x`. tests/test_cli_e2e.py asserts this pattern
 # equals the Terraform one, so the two cannot drift.
-PROJECT_NAME_PATTERN = r"^[a-z][a-z0-9-]{2,34}$"
+PROJECT_NAME_PATTERN = r"^[a-z][a-z0-9-]{2,26}$"
 _PROJECT_NAME_RE = re.compile(PROJECT_NAME_PATTERN)
 
 
@@ -77,7 +77,7 @@ def cmd_init(args: argparse.Namespace) -> None:
 
     if not _PROJECT_NAME_RE.fullmatch(args.name):
         print(
-            f"ERROR: '{args.name}' is not a valid project name: use 3-35 lowercase "
+            f"ERROR: '{args.name}' is not a valid project name: use 3-27 lowercase "
             "letters, digits and hyphens, starting with a letter (e.g. my-bot). "
             "The name prefixes every AWS resource the stack creates.",
             file=sys.stderr,

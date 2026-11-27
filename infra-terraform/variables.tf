@@ -10,8 +10,8 @@ variable "project_name" {
   type        = string
 
   validation {
-    condition     = can(regex("^[a-z][a-z0-9-]{2,34}$", var.project_name))
-    error_message = "Must start with a lowercase letter, be 3-35 characters, and contain only lowercase alphanumeric characters and hyphens."
+    condition     = can(regex("^[a-z][a-z0-9-]{2,26}$", var.project_name))
+    error_message = "Must start with a lowercase letter, be 3-27 characters, and contain only lowercase alphanumeric characters and hyphens."
   }
 }
 

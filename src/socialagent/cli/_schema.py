@@ -82,7 +82,7 @@ _STATE_KEYS = {"prefix", "stage", "workspace"}
 
 # Same rule as the project_name validation in infra-terraform/variables.tf
 # (and socialagent.cli.init.PROJECT_NAME_PATTERN).
-_PROJECT_RE = re.compile(r"^[a-z][a-z0-9-]{2,34}$")
+_PROJECT_RE = re.compile(r"^[a-z][a-z0-9-]{2,26}$")
 _SECRET_NAME_RE = re.compile(r"^[A-Za-z0-9/_+=.@-]{1,512}$")
 
 _REQUIRED = ("project", "environment", "region")
@@ -185,7 +185,7 @@ def validate(config: dict[str, Any]) -> list[str]:
     project = config.get("project")
     if project and not (isinstance(project, str) and _PROJECT_RE.fullmatch(project)):
         errors.append(
-            f"project must be 3-35 lowercase letters, digits and hyphens starting "
+            f"project must be 3-27 lowercase letters, digits and hyphens starting "
             f"with a letter, got {project!r}"
         )
     env = config.get("environment")

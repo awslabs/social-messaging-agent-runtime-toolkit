@@ -57,7 +57,7 @@ outputs: {}   # written by deploy / config sync
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `schema_version` | yes | — | `3` |
-| `project` | yes | — | 3–35 characters: lowercase letters, digits and hyphens, starting with a letter. Prefixes every AWS resource name |
+| `project` | yes | — | 3–27 characters: lowercase letters, digits and hyphens, starting with a letter. Prefixes every AWS resource name |
 | `environment` | yes | — | `dev`, `test` or `prod`; keep it the same as the file name's `<env>` |
 | `region` | yes | — | AWS region for the stack |
 | `deployment_type` | no | `docker` | `docker` (container image built in CodeBuild) or `zip` (Python package built in CodeBuild for arm64, no Docker; a requirement that fails to install fails the deploy, and a rebuilt package does not reach a runtime that already exists, which keeps the package it has until the runtime itself is updated: [Zip Deployment](../infra-terraform/README.md#zip-deployment-no-docker-required)) |
