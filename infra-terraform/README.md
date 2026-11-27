@@ -211,7 +211,33 @@ The stack uses AWS-managed keys and service defaults (the `ENCRYPTION POSTURE` c
 socialagent destroy --env dev        # from the project; make tf-destroy ENV=my-bot-dev from the repository root
 ```
 
-Destroys all resources including AgentCore Runtime, Memory, ECR repository, and all Lambda functions. Terraform does not own the agent runtime's log group, which AgentCore creates, and does not delete it; the 30-day retention the stack set on it still expires its events.
+Destroys the stack resources, including AgentCore Runtime, Memory, the ECR repository, and all Lambda functions. Terraform does not own the agent runtime's log group, which AgentCore creates, and does not delete it; the 30-day retention the stack set on it still expires its events.
+
+Secrets Manager keeps deleted secrets in a seven-day recovery window. Recreating the same project and environment during that window can therefore fail because names such as `dev-my-bot-event-webhook-secret` are still reserved. `enable_force_destroy` applies to non-empty buckets and does not bypass this recovery window.
+
+For a development stack that must reuse the same name immediately, first inspect the scheduled secret and confirm that its tags identify the stack you just destroyed: `Project` must equal the `project` and `Environment` the `environment` from `socialagent.<env>.yaml` (`my-bot` and `dev` here). Use the `region` from the same file:
+
+```bash
+SECRET_NAME=dev-my-bot-event-webhook-secret
+REGION=us-east-1   # the region in socialagent.<env>.yaml
+aws secretsmanager describe-secret \
+  --region "$REGION" \
+  --secret-id "$SECRET_NAME" \
+  --query '{Name:Name,DeletedDate:DeletedDate,Tags:Tags}'
+```
+
+A project secret (a name under `secrets:` in the YAML, created as `<environment>-<project>-<name>`) needs one more check first. The redeployed stack recreates it as `{}`, so its value has to be set again with `socialagent secrets set`, and force-deleting it removes the only way to read the old value. If you still need that value, cancel the deletion with `aws secretsmanager restore-secret`, after which `aws secretsmanager get-secret-value` works again, and save the value before you continue. A restored secret no longer has a `DeletedDate`; check its tags again before you delete it. The event webhook secret needs none of this, because the deploy generates a new value for it.
+
+Only when `DeletedDate` is set (or you have just restored the secret to save its value) and both tags match exactly, permanently delete that specific secret:
+
+```bash
+aws secretsmanager delete-secret \
+  --region "$REGION" \
+  --secret-id "$SECRET_NAME" \
+  --force-delete-without-recovery
+```
+
+This deletion cannot be undone. Never force-delete a secret based on its name alone, and do not use this shortcut for a production secret. AWS completes forced deletion asynchronously, so wait until `describe-secret` reports that the secret is not found before redeploying. If another project secret blocks recreation, repeat the same tag check and explicit deletion for that exact secret.
 
 ## Module Reference
 
