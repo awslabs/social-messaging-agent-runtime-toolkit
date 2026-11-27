@@ -235,8 +235,34 @@ resource "aws_api_gateway_integration_response" "ok" {
 # Deploy
 resource "aws_api_gateway_deployment" "events" {
   rest_api_id = aws_api_gateway_rest_api.events.id
-  triggers    = { redeployment = sha1(jsonencode([aws_api_gateway_resource.events, aws_api_gateway_method.post_event, aws_api_gateway_integration.sns])) }
-  depends_on  = [aws_api_gateway_integration.sns]
+  triggers = {
+    # Snapshot the route only after its responses exist. Hash stable attributes
+    # rather than whole provider objects so an unchanged plan stays unchanged.
+    redeployment = sha1(jsonencode([
+      aws_api_gateway_resource.events.id,
+      aws_api_gateway_resource.events.path_part,
+      aws_api_gateway_authorizer.webhook.id,
+      aws_api_gateway_authorizer.webhook.name,
+      aws_api_gateway_authorizer.webhook.type,
+      aws_api_gateway_authorizer.webhook.authorizer_uri,
+      aws_api_gateway_authorizer.webhook.identity_source,
+      aws_api_gateway_authorizer.webhook.authorizer_result_ttl_in_seconds,
+      aws_api_gateway_method.post_event.id,
+      aws_api_gateway_method.post_event.authorization,
+      aws_api_gateway_method.post_event.authorizer_id,
+      aws_api_gateway_method.post_event.api_key_required,
+      aws_api_gateway_integration.sns.id,
+      aws_api_gateway_integration.sns.type,
+      aws_api_gateway_integration.sns.integration_http_method,
+      aws_api_gateway_integration.sns.uri,
+      aws_api_gateway_integration.sns.request_templates,
+      aws_api_gateway_integration.sns.request_parameters,
+      aws_api_gateway_integration.sns.credentials,
+      aws_api_gateway_method_response.ok.id,
+      aws_api_gateway_integration_response.ok.id,
+      aws_api_gateway_integration_response.ok.response_templates,
+    ]))
+  }
   lifecycle { create_before_destroy = true }
 }
 
