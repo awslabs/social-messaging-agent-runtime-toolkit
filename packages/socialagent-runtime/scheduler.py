@@ -291,8 +291,55 @@ def _schedule_name(schedule_id: str) -> str:
     # treat "socialagent-devious" as already-prefixed and leave it outside the NamePrefix
     # namespace, where list_schedules and the per-user cap could never see it.
     if prefix and (safe_id == prefix or safe_id.startswith(f"{prefix}-")):
-        return safe_id
-    return f"{prefix}-{safe_id}" if prefix else safe_id
+        return _fit_name(safe_id, prefix)
+    return _fit_name(f"{prefix}-{safe_id}" if prefix else safe_id, prefix)
+
+
+# EventBridge Scheduler's limit on a schedule name.
+_MAX_NAME = 64
+_HASH_LEN = 7
+
+
+def _fit_name(name: str, prefix: str) -> str:
+    """``name``, or a shortened name of at most 64 characters with the same owner.
+
+    CreateSchedule rejects a longer name, so the reminder or task was never
+    created (#248). A long name keeps its owner's digits where
+    :func:`_schedule_owner` reads them, and gains a hash of the whole name, so
+    two ids that share their start get two names, and an id gets the same name
+    every time, which ``cancel`` relies on:
+
+    - ``{prefix}-{label}-{digits}`` keeps its digits last after a shortened
+      label and a letters-only hash, since every field before the digits must
+      be letters for the owner to be read.
+    - Any other name, ``{prefix}-{digits}-...`` included, keeps its start, cut
+      on the right, and ends in the hash.
+
+    Raises ``ValueError`` rather than return a name whose owner changed, so a
+    shortened name can never be read as another user's.
+    """
+    if len(name) <= _MAX_NAME:
+        return name
+    digest = hashlib.sha256(name.encode()).hexdigest()
+    owner = _schedule_owner(name, prefix)
+    head = f"{prefix}-" if prefix else ""
+    rest = name[len(head) :]
+    if owner and not rest.startswith(f"{owner}-"):
+        # {label}-{digits}: the hash spelt in letters (a-p for each hex digit).
+        letters = "".join(chr(ord("a") + int(c, 16)) for c in digest[:_HASH_LEN])
+        room = _MAX_NAME - len(head) - len(letters) - len(owner) - 2
+        label = rest[: -(len(owner) + 1)][: max(room, 0)].strip("-")
+        fitted = head + "-".join(f for f in (label, letters, owner) if f)
+    else:
+        fitted = (
+            name[: _MAX_NAME - _HASH_LEN - 1].rstrip("-") + "-" + digest[:_HASH_LEN]
+        )
+    if len(fitted) > _MAX_NAME or _schedule_owner(fitted, prefix) != owner:
+        raise ValueError(
+            f"schedule name is longer than {_MAX_NAME} characters and cannot be "
+            "shortened without losing its owner"
+        )
+    return fitted
 
 
 def _at_expression(delay_minutes: int) -> str:
