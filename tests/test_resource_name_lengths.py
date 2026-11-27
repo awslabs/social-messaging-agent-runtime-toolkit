@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Every resource name the stack builds fits its service's limit.
+"""Every resource name the stack's Terraform writes fits its service's limit.
 
 The names are built from ``environment`` and ``project_name``, so the longest
 of each that ``infra-terraform/variables.tf`` accepts makes the longest name.
@@ -9,10 +9,14 @@ Terraform checks neither against the services' limits, so a name that is too
 long passes ``validate`` and ``plan`` and fails at ``apply``, part way through
 creating the stack (#246).
 
-The check reads the ``.tf`` sources, with no Terraform binary: each quoted
-name attribute that interpolates the stack's prefix is rebuilt from the
-longest values and compared with ``LIMITS``. A new resource type or name
-attribute has no entry there, which fails the test until its limit is added.
+The check reads the ``.tf`` sources, with no Terraform binary: each name
+attribute of a resource, written as one quoted string that interpolates the
+stack's prefix, is rebuilt from the longest values and compared with
+``LIMITS``. A new resource type or name attribute has no entry there, which
+fails the test until its limit is added, and a name attribute that uses the
+prefix in any other form fails until the check can rebuild it. Names the code
+builds at run time, such as EventBridge schedule names, are not in the ``.tf``
+files and have tests of their own.
 """
 
 from __future__ import annotations
@@ -27,10 +31,11 @@ TF_ROOT = REPO_ROOT / "infra-terraform"
 
 ACCOUNT_ID = "123456789012"
 
-# The longest name each service accepts, from its API reference (or the
-# botocore model's max where the reference gives none). None marks a name with
-# no documented length limit, listed so that it is a decision and not an
-# omission.
+# The longest name each service accepts: the botocore service model's max or
+# pattern where it has one, and the service's documented limit where it has
+# none (S3, Lambda, SQS, SNS, DynamoDB, CloudWatch dashboards, CloudTrail,
+# CloudFormation). None marks a name with no documented length limit, listed
+# so that it is a decision and not an omission.
 LIMITS: dict[tuple[str, str], int | None] = {
     ("aws_s3_bucket", "bucket"): 63,
     ("aws_iam_role", "name"): 64,
@@ -81,6 +86,10 @@ _PREFIX_DEF = re.compile(
     r'\b(prefix(?:_s3|_underscore)?)\s*=\s*("(?:\$\{[^}]*\}|[^"$])*"|lower\(local\.prefix\))'
 )
 _STACK_INPUTS = ("${local.prefix", "${var.environment}", "${var.project_name}")
+_ANY_ATTR = re.compile(r"^\s*([a-z_]+)\s*=\s*(.+?)\s*$")
+_STACK_REFERENCE = re.compile(
+    r"local\.(?:prefix|stack_id)|var\.(?:project_name|environment)"
+)
 
 
 def _longest_inputs() -> tuple[str, str]:
@@ -263,3 +272,29 @@ def test_cli_project_length(length, valid):
     config = {"project": "a" * length, "environment": "prod", "region": "us-east-1"}
     errors = [e for e in _schema.validate(config) if e.startswith("project must")]
     assert (errors == []) is valid
+
+
+def test_no_name_uses_the_prefix_in_a_form_the_check_cannot_rebuild():
+    # A conditional, a function call or a multi-line string would be skipped by
+    # the scan above, and a name that is too long would pass unchecked.
+    name_attrs = {attr for _, attr in LIMITS} | {"name_prefix", "bucket_prefix"}
+    unreadable = []
+    for tf in sorted(TF_ROOT.rglob("*.tf")):
+        parts = tf.relative_to(TF_ROOT).parts
+        if parts[0] in {"bootstrap", "tftest"} or ".terraform" in parts:
+            continue
+        resource = None
+        for number, line in enumerate(tf.read_text().splitlines(), 1):
+            if _TOP.match(line):
+                block = _BLOCK.match(line)
+                resource = block.group(1) if block else None
+                continue
+            attr = _ANY_ATTR.match(line)
+            if resource is None or attr is None or attr.group(1) not in name_attrs:
+                continue
+            if _ATTR.match(line) or not _STACK_REFERENCE.search(attr.group(2)):
+                continue
+            unreadable.append(f"{tf.relative_to(REPO_ROOT)}:{number} {line.strip()}")
+    assert not unreadable, "write these names as one quoted string:\n" + "\n".join(
+        unreadable
+    )
