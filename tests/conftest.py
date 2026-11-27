@@ -19,10 +19,11 @@ os.environ.setdefault("NOTIFICATION_LAMBDA_ARN", "__socialagent_dev__")
 # a terminal, and the CLI console in socialagent.cli.dev fixes its colour system
 # when it is built at import, during collection, so an autouse fixture is too
 # late. With either set, escape codes land between wrapped words in captured CLI
-# output (#233). Cleared here so the suite does not depend on the terminal; pass
-# pytest --color=yes for coloured pytest output.
-for _colour in ("FORCE_COLOR", "TTY_COMPATIBLE"):
-    os.environ.pop(_colour, None)
+# output (#233). COLUMNS and LINES set its size the same way, and a narrow
+# terminal wraps a phrase the tests look for. Cleared here so the suite does not
+# depend on the terminal; pass pytest --color=yes for coloured pytest output.
+for _terminal in ("FORCE_COLOR", "TTY_COMPATIBLE", "COLUMNS", "LINES"):
+    os.environ.pop(_terminal, None)
 
 # Mock bedrock_agentcore before importing socialagent_runtime — it's not installed in test env
 if "bedrock_agentcore" not in sys.modules:
