@@ -385,7 +385,7 @@ def test_bytes_and_other_sequences(unpatched):
 
 
 class _BrokenSequence(Sequence):
-    """A sequence whose iteration raises, so masking it fails."""
+    """A sequence whose iteration always raises, so masking it fails."""
 
     def __len__(self) -> int:
         return 1
@@ -395,8 +395,9 @@ class _BrokenSequence(Sequence):
 
 
 def test_a_value_that_cannot_be_masked_is_dropped_not_sent_unmasked(unpatched, spans):
-    """Only the per-value guard stands between such a value and a hand-added
-    ``exception`` event going out with ``exception.message`` unmasked."""
+    """The per-value guard drops a value that cannot be masked, so neither
+    ``add_event`` nor ``record_exception`` raises into the caller; the SDK would
+    raise too on a value that never reads (see the next test for the leak)."""
     _span_masking.install_span_masking()
     tracer, exporter = spans
     with tracer.start_as_current_span("tool") as span:
@@ -416,3 +417,64 @@ def test_a_value_that_cannot_be_masked_is_dropped_not_sent_unmasked(unpatched, s
     ]
     assert all("route" not in e for e in events)
     _no_number(exporter)
+
+
+class _FirstReadFails(Sequence):
+    """A sequence that fails on its first read only: masking it fails, but the
+    SDK, reading it after, succeeds."""
+
+    def __init__(self, items):
+        self._items, self._failed = list(items), False
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    def __getitem__(self, index):
+        if not self._failed:
+            self._failed = True
+            raise RuntimeError("first read fails")
+        return self._items[index]
+
+
+def test_a_value_that_fails_once_does_not_let_the_event_out_unmasked(unpatched, spans):
+    """Without the per-value guard the add_event wrapper passed every attribute
+    on unmasked; the SDK's own read of this value then succeeds, so the event
+    went out with ``exception.message`` in full."""
+    _span_masking.install_span_masking()
+    tracer, exporter = spans
+    with tracer.start_as_current_span("tool") as span:
+        span.add_event(
+            "exception",
+            {
+                "exception.message": f"bad recipient {PHONE}",
+                "route": _FirstReadFails([PHONE]),
+            },
+        )
+
+    (span,) = exporter.get_finished_spans()
+    event = _exception_event(span)
+    assert event["exception.message"] == "bad recipient +...0100"
+    assert "route" not in event
+    _no_number(exporter)
+
+
+def test_nested_mappings_and_sequences_are_masked_at_every_level(unpatched):
+    value = {"to": [PHONE, {"backup": (PHONE, 2)}], "note": f"for {PHONE}"}
+    masked = _span_masking._masked_value(value)
+    assert masked == {
+        "to": ("+...0100", {"backup": ("+...0100", 2)}),
+        "note": "for +...0100",
+    }
+
+
+def test_a_self_referencing_value_is_dropped_not_followed_forever(unpatched, spans):
+    loop = [PHONE]
+    loop.append(loop)
+    _span_masking.install_span_masking()
+    tracer, exporter = spans
+    with tracer.start_as_current_span("tool") as span:
+        span.record_exception(ValueError(f"for {PHONE}"), attributes={"loop": loop})
+
+    event = _exception_event(exporter.get_finished_spans()[0])
+    assert "loop" not in event
+    assert event["exception.message"] == "for +...0100"

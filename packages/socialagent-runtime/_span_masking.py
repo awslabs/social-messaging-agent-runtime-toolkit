@@ -18,7 +18,7 @@ tracer provider ADOT installs.
 from __future__ import annotations
 
 import functools
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 import traceback
 from typing import Any
 
@@ -33,14 +33,23 @@ _EXCEPTION_EVENT = "exception"
 _MASKING_MARKER = "_socialagent_masks_phone_numbers"
 
 
-def _masked_value(value: Any) -> Any:
-    """A string masked, and each string in any other sequence (an OpenTelemetry
-    attribute may be a sequence of strings), as a tuple, which is how the SDK
-    stores a sequence; bytes and anything else as it is."""
+# Deeper than any attribute a framework records; a value nested further, or
+# one that contains itself, raises here and the per-value guard drops it.
+_MAX_DEPTH = 16
+
+
+def _masked_value(value: Any, depth: int = 0) -> Any:
+    """A string masked, and every string nested in a mapping or a sequence (the
+    SDK stores both as attribute values), each sequence as a tuple, which is how
+    the SDK stores one; bytes and anything else as it is."""
+    if depth > _MAX_DEPTH:
+        raise ValueError("attribute value nested too deeply to mask")
     if isinstance(value, str):
         return mask_phone(value)
+    if isinstance(value, Mapping):
+        return {key: _masked_value(item, depth + 1) for key, item in value.items()}
     if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
-        return tuple(mask_phone(v) if isinstance(v, str) else v for v in value)
+        return tuple(_masked_value(item, depth + 1) for item in value)
     return value
 
 
