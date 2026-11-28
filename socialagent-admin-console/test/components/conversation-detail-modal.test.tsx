@@ -220,6 +220,30 @@ describe("ConversationDetailModal reply composer", () => {
     vi.mocked(api.sendTemplateMessage).mockClear();
   });
 
+  it("sends only the current template's language and parameters", async () => {
+    vi.mocked(api.getTemplates).mockResolvedValue(["first", "slow", "last"].map(name => listed(name, "bot-dev")));
+    let finishSlow!: (value: TemplateDetail) => void;
+    vi.mocked(api.getTemplateDetail)
+      .mockResolvedValueOnce(template("first", "Hello {{1}}"))
+      .mockImplementationOnce(() => new Promise(resolve => { finishSlow = resolve; }))
+      .mockResolvedValueOnce({ ...template("last", "Bonjour"), language: "fr" });
+    render(viewer("bot-dev"));
+    fireEvent.click(await screen.findByRole("button", { name: "Template" }));
+    await screen.findByRole("option", { name: "first (UTILITY)" });
+    const pick = (value: string) => fireEvent.change(screen.getByRole("combobox"), { target: { value } });
+    pick("first");
+    fireEvent.change(await screen.findByPlaceholderText("Parameter {{1}}"), { target: { value: "old" } });
+    pick("slow");
+    const send = screen.getByRole("button", { name: "Send template" });
+    expect(send).toBeDisabled();
+    expect(screen.queryByPlaceholderText("Parameter {{1}}")).toBeNull();
+    pick("last");
+    await screen.findByText("Bonjour");
+    await act(async () => finishSlow(template("slow", "Late {{1}}")));
+    fireEvent.click(send);
+    expect(api.sendTemplateMessage).toHaveBeenCalledWith("bot-dev", "15555550100", "last", "fr", []);
+  });
+
   it("starts afresh for another stack's conversation", async () => {
     // The Conversations page keeps one viewer for every stack: a template picked
     // for one stack's conversation must not be sent, or previewed, in another's.

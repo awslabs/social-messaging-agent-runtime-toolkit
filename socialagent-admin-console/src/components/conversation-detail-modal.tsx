@@ -126,6 +126,7 @@ function ConversationViewer({ visible, onDismiss, stackId, phoneHash, fullPhone,
   const [sending, setSending] = useState(false);
   const [replyMode, setReplyMode] = useState<"text" | "template">("text");
   const [templates, setTemplates] = useState<{ name: string; category: string }[]>([]);
+  const selectionVersion = useRef(0);
   const [selectedTpl, setSelectedTpl] = useState<string>("");
   const [tplParams, setTplParams] = useState<string[]>([]);
   const [tplDetail, setTplDetail] = useState<TemplateDetail | null>(null);
@@ -222,10 +223,10 @@ function ConversationViewer({ visible, onDismiss, stackId, phoneHash, fullPhone,
 
   const handleSendReply = async () => {
     if (replyMode === "template") {
-      if (!selectedTpl) return;
+      if (!selectedTpl || !tplDetail?.language) return;
       setSending(true);
       try {
-        await api.sendTemplateMessage(stackId, fullPhone, selectedTpl, tplDetail?.language || "en", tplParams);
+        await api.sendTemplateMessage(stackId, fullPhone, selectedTpl, tplDetail.language, tplParams);
         setAllMessages((prev) => [...prev, { role: "assistant", content: `[Template: ${selectedTpl}]`, timestamp: new Date().toISOString() }]);
         setSelectedTpl("");
         setTplParams([]);
@@ -371,17 +372,23 @@ function ConversationViewer({ visible, onDismiss, stackId, phoneHash, fullPhone,
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
               <select style={{ background: "#2a2e33", border: "1px solid #3a3e43", borderRadius: "8px", padding: "8px", color: "#fff", fontSize: "13px" }}
-                value={selectedTpl} onChange={(e) => {
+                disabled={sending} value={selectedTpl} onChange={(e) => {
                   const name = e.target.value;
+                  const version = ++selectionVersion.current;
                   setSelectedTpl(name);
+                  setTplDetail(null);
+                  setTplParams([]);
                   if (name) {
                     api.getTemplateDetail(stackId, name).then((d) => {
+                      if (version !== selectionVersion.current) return;
                       setTplDetail(d);
                       const body = d.components.find((c) => c.type === "BODY");
                       const count = (body?.text?.match(/\{\{\d+\}\}/g) || []).length;
                       setTplParams(new Array(count).fill(""));
-                    }).catch(() => { setTplDetail(null); setTplParams([]); });
-                  } else { setTplDetail(null); setTplParams([]); }
+                    }).catch(() => {
+                      if (version === selectionVersion.current) setError("Could not load the selected template. Select it again to retry.");
+                    });
+                  }
                 }}>
                 <option value="">Select template...</option>
                 {templates.map((t) => <option key={t.name} value={t.name}>{t.name} ({t.category})</option>)}
@@ -399,7 +406,7 @@ function ConversationViewer({ visible, onDismiss, stackId, phoneHash, fullPhone,
                   </div>
                 </div>
               )}
-              <Button variant="primary" loading={sending} disabled={!selectedTpl} onClick={handleSendReply}>Send template</Button>
+              <Button variant="primary" loading={sending} disabled={!selectedTpl || !tplDetail?.language} onClick={handleSendReply}>Send template</Button>
             </div>
           )}
         </div>
