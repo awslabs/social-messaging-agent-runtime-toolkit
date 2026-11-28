@@ -25,7 +25,7 @@ function template(name: string, body: string): TemplateDetail {
 }
 
 function listed(name: string, stack: string): WhatsAppTemplate {
-  return { name, stack, category: "UTILITY", language: "en", approvalStatus: "approved", lastSynced: "2024-07-01" };
+  return { name, stack, category: "UTILITY", language: "en", approvalStatus: "approved" };
 }
 
 /** Open the modal on a conversation whose user messages are `contents`. */
