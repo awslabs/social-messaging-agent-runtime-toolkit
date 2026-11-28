@@ -22,6 +22,7 @@ All notable changes to SMART, the Social Messaging Agent Runtime Toolkit, are re
 - Both reach a stack at its next `socialagent deploy`, with no `socialagent runtime update`: they are Terraform and the runtime's environment, not the vendored runtime. That deploy deletes the group's events older than 30 days (CloudWatch removes them within 72 hours) and masks only the events ingested after it. A runtime session that started before it keeps logging the Bedrock-call content until it ends, after 15 idle minutes or at most 8 hours.
 
 ### Admin console
+- Switching reply templates clears the previous parameters and waits for the selected template’s language before enabling Send (#232).
 - Restart runtime and Nuclear reset keep the runtime's whole configuration. Both sent `UpdateAgentRuntime` only the artifact, role, network settings and environment variables, and the update clears what it is not sent, so on a stack deployed with `authorizer_discovery_url` a restart dropped the JWT authorizer and the `Authorization` header allowlist, and callers that send a JWT were refused until the next `socialagent deploy`. They now send back every field `GetAgentRuntime` returns that `UpdateAgentRuntime` accepts, with a new description. This reaches a console with its next deploy (#234).
 
 ## [2026.11.0] - 2026-11-13
