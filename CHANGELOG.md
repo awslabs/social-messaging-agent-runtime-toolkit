@@ -24,6 +24,9 @@ All notable changes to SMART, the Social Messaging Agent Runtime Toolkit, are re
 ### Admin console
 - Restart runtime and Nuclear reset keep the runtime's whole configuration. Both sent `UpdateAgentRuntime` only the artifact, role, network settings and environment variables, and the update clears what it is not sent, so on a stack deployed with `authorizer_discovery_url` a restart dropped the JWT authorizer and the `Authorization` header allowlist, and callers that send a JWT were refused until the next `socialagent deploy`. They now send back every field `GetAgentRuntime` returns that `UpdateAgentRuntime` accepts, with a new description. This reaches a console with its next deploy (#234).
 
+### Admin console
+- The Events table's row action is called "View summary" instead of "View full payload": it shows the masked summary the event Lambda logs, and the console never has the full payload (#87).
+
 ## [2026.11.0] - 2026-11-13
 
 **Upgrading a project.** The agent runtime changed in this release (outbound reactions), and a project's `socialagent_runtime/` is a copy made by `socialagent init`, so it keeps the old one until it is replaced. A CLI installed from PyPI has no git history to tell an earlier copy from a later or edited one, so `socialagent runtime status` reports the copy as `unknown` and `socialagent runtime update` refuses it: run `socialagent runtime update --force`, which keeps a backup under `.socialagent/runtime-backups/`.
